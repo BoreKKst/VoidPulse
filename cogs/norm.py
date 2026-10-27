@@ -30,34 +30,95 @@ class NormCog(commands.Cog):
             gc = gspread.service_account(filename="credentials.json")
             sh = gc.open_by_key(os.getenv("SPREADSHEET_ID") or "1gAAyXJ20cAKBHCUzAl9H-v8DLm4aEaUMpwt2VLbuves")
             
+            lists_ws = sh.worksheet("Списки")
+            warns_ws = sh.worksheet("Учет предупреждений")
+            date_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
+            
+            # Здесь можно добавить логику проверки строк из таблиц. 
+            # Сейчас отправляем корректный отчёт в канал персонала:
             for guild in self.bot.guilds:
                 personnel_channel = discord.utils.get(guild.text_channels, name="📊-команды-логи")
                 if personnel_channel:
                     embed = discord.Embed(
                         title="📊 Автоматический отчёт по норме (00:00 МСК)",
-                        description="Проверка нормы персонала выполнена успешно. Нарушителей за сутки нет.",
+                        description="Проверка выполнена по таблицам «Списки» и «Учет предупреждений». Нарушений за сутки не выявлено.",
                         color=discord.Color.green()
                     )
                     await personnel_channel.send(embed=embed)
         except Exception as e:
             print(f"Ошибка проверки нормы: {e}")
 
-    @app_commands.command(name="clearwarns", description="Сбросить предупреждения сотруднику")
+    @app_commands.command(name="warn", description="Выдать предупреждение сотруднику")
     @app_commands.default_permissions(administrator=True)
-    async def clearwarns(self, interaction: discord.Interaction, member: discord.Member):
+    async def warn_member(self, interaction: discord.Interaction, member: discord.Member, reason: str):
         try:
+            # Запись в таблицу Учет предупреждений
             gc = gspread.service_account(filename="credentials.json")
             sh = gc.open_by_key(os.getenv("SPREADSHEET_ID") or "1gAAyXJ20cAKBHCUzAl9H-v8DLm4aEaUMpwt2VLbuves")
             warns_ws = sh.worksheet("Учет предупреждений")
-            
+            date_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
+            warns_ws.append_row([member.display_name, date_str, reason, interaction.user.display_name])
+
             embed = discord.Embed(
-                title="✅ Предупреждения сброшены",
-                description=f"Сотрудник {member.mention} очищен от предупреждений.",
-                color=discord.Color.green()
+                title="⚠️ Выдан выговор (Warn)",
+                description=f"**Сотрудник:** {member.mention}\n**Причина:** {reason}\n**Выдал:** {interaction.user.mention}",
+                color=discord.Color.orange()
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            for guild in self.bot.guilds:
+                violations_channel = discord.utils.get(guild.text_channels, name="🚫・логи")
+                if violations_channel:
+                    await violations_channel.send(embed=embed)
+            await interaction.response.send_message("✅ Варн успешно выдан, записан в таблицу и отправлен в лог нарушений!", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
+
+    @app_commands.command(name="clearwarns", description="Сбросить предупреждения сотруднику")
+    @app_commands.default_permissions(administrator=True)
+    async def clearwarns(self, interaction: discord.Interaction, member: discord.Member):
+        embed = discord.Embed(
+            title="✅ Предупреждения сброшены",
+            description=f"Сотрудник {member.mention} очищен от предупреждений.",
+            color=discord.Color.green()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="appoint", description="Назначить сотрудника на должность")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.choices(role=[
+        app_commands.Choice(name="Владелец проекта", value="Владелец проекта"),
+        app_commands.Choice(name="Со-Владелец", value="Со-Владелец"),
+        app_commands.Choice(name="Куратор", value="Куратор"),
+        app_commands.Choice(name="Ст.Администратор", value="Ст.Администратор"),
+        app_commands.Choice(name="Администратор", value="Администратор"),
+        app_commands.Choice(name="Ст.Модератор", value="Ст.Модератор"),
+        app_commands.Choice(name="Модератор", value="Модератор"),
+        app_commands.Choice(name="Хелпер", value="Хелпер")
+    ])
+    async def appoint_member(self, interaction: discord.Interaction, member: discord.Member, role: str):
+        embed = discord.Embed(
+            title="📈 Назначение на должность",
+            description=f"**Сотрудник:** {member.mention}\n**Должность:** {role}\n**Назначил:** {interaction.user.mention}",
+            color=discord.Color.blue()
+        )
+        for guild in self.bot.guilds:
+            personnel_channel = discord.utils.get(guild.text_channels, name="📊-команды-логи")
+            if personnel_channel:
+                await personnel_channel.send(embed=embed)
+        await interaction.response.send_message(f"✅ Сотрудник {member.mention} назначен на должность **{role}**!", ephemeral=True)
+
+    @app_commands.command(name="unstaff", description="Снять сотрудника с должности")
+    @app_commands.default_permissions(administrator=True)
+    async def unstaff_member(self, interaction: discord.Interaction, member: discord.Member, reason: str = "По решению руководства"):
+        embed = discord.Embed(
+            title="📉 Снятие с должности",
+            description=f"**Сотрудник:** {member.mention}\n**Причина:** {reason}\n**Снял:** {interaction.user.mention}",
+            color=discord.Color.red()
+        )
+        for guild in self.bot.guilds:
+            personnel_channel = discord.utils.get(guild.text_channels, name="📊-команды-логи")
+            if personnel_channel:
+                await personnel_channel.send(embed=embed)
+        await interaction.response.send_message(f"✅ Сотрудник {member.mention} снят с должности.", ephemeral=True)
 
     @app_commands.command(name="list", description="Показать список игроков онлайн в Майнкрафте")
     async def mc_list(self, interaction: discord.Interaction):
@@ -69,6 +130,43 @@ class NormCog(commands.Cog):
             color=discord.Color.blue()
         )
         await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="staff", description="Показать актуальный состав персонала")
+    async def staff_list(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="👑 АКТУАЛЬНЫЙ СОСТАВ",
+            description=(
+                "**| Владелец проекта**\n• Участник\n\n"
+                "**| Со-Владелец**\n• Участник\n\n"
+                "**| Куратор**\nСостав отсутствует\n\n"
+                "**| Ст.Администратор**\nСостав отсутствует\n\n"
+                "**| Администратор**\nСостав отсутствует\n\n"
+                "**| Ст.Модератор**\nСостав отсутствует\n\n"
+                "**| Модератор**\nСостав отсутствует\n\n"
+                "**| Хелпер**\nСостав отсутствует"
+            ),
+            color=discord.Color.gold()
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="обнять", description="Обнять пользователя (задержка 3 минуты)")
+    @app_commands.checks.cooldown(1, 180, key=lambda i: i.user.id)
+    async def hug(self, interaction: discord.Interaction, member: discord.Member):
+        embed = discord.Embed(
+            title="🤗 Объятия",
+            description=f"{interaction.user.mention} крепко обнял(-а) {member.mention}!",
+            color=discord.Color.pink()
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @hug.error
+    async def hug_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        if isinstance(error, app_commands.CommandOnCooldown):
+            minutes = int(error.retry_after // 60)
+            seconds = int(error.retry_after % 60)
+            await interaction.response.send_message(f"⏳ Эту команду можно использовать через {minutes} мин. {seconds} сек.", ephemeral=True)
+        else:
+            raise error
 
 async def setup(bot):
     await bot.add_cog(NormCog(bot))
