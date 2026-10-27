@@ -5,6 +5,7 @@ import datetime
 import pytz
 import gspread
 import os
+import asyncio
 
 class StaffCog(commands.Cog):
     def __init__(self, bot):
@@ -33,7 +34,7 @@ class StaffCog(commands.Cog):
 
     async def execute_norm_check(self):
         try:
-            ws = self.get_lists_sheet()
+            ws = await asyncio.to_thread(self.get_lists_sheet)
             ch = self.bot.get_channel(self.personnel_channel_id)
             if ch:
                 embed = discord.Embed(
@@ -110,9 +111,10 @@ class StaffCog(commands.Cog):
 
     @app_commands.command(name="staff", description="Автоматический вывод состава персонала из таблицы «Списки»")
     async def staff_list(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         try:
-            ws = self.get_lists_sheet()
-            rows = ws.get_all_values()
+            ws = await asyncio.to_thread(self.get_lists_sheet)
+            rows = await asyncio.to_thread(ws.get_all_values)
             
             roles_order = [
                 "Владелец проекта", "Со-Владелец", "Куратор",
@@ -122,7 +124,6 @@ class StaffCog(commands.Cog):
             
             staff_by_role = {role: [] for role in roles_order}
             
-            # Читаем данные из таблицы (столбец A — Ник, столбец B — Должность)
             if len(rows) > 1:
                 for row in rows[1:]:
                     if len(row) >= 2 and row[0].strip() and row[1].strip():
@@ -147,9 +148,9 @@ class StaffCog(commands.Cog):
                 description="\n".join(description_lines),
                 color=discord.Color.gold()
             )
-            await interaction.response.send_message(embed=embed)
+            await interaction.followup.send(embed=embed)
         except Exception as e:
-            await interaction.response.send_message(f"❌ Ошибка чтения таблицы «Списки»: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Ошибка чтения таблицы «Списки»: {e}", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(StaffCog(bot))
