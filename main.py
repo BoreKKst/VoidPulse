@@ -26,7 +26,6 @@ bot = VoidPulseBot()
 async def on_ready():
     print(f"🚀 Бот {bot.user} запущен и готов к работе!")
     
-    # Проверка очереди перезапуска (сообщаем Владельцу, что всё встало идеально)
     if os.path.exists("restart_queue.txt"):
         os.remove("restart_queue.txt")
         try:
@@ -38,6 +37,9 @@ async def on_ready():
 
 if __name__ == "__main__":
     keep_alive()
-    token = os.getenv("TOKEN", config.TOKEN)
+    # Теперь бот точно найдет твой токен из Render!
+    token = os.getenv("DISCORD_TOKEN")
     if token:
         bot.run(token, log_handler=None)
+    else:
+        print("❌ ОШИБКА: Токен не найден! Проверьте переменные окружения.")
