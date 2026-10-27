@@ -35,11 +35,46 @@ class StaffCog(commands.Cog):
     async def execute_norm_check(self):
         try:
             ws = await asyncio.to_thread(self.get_lists_sheet)
+            rows = await asyncio.to_thread(ws.get_all_values)
             ch = self.bot.get_channel(self.personnel_channel_id)
+            
+            roles_order = [
+                "Владелец проекта", "Со-Владелец", "Куратор",
+                "Ст.Администратор", "Администратор", "Ст.Модератор",
+                "Модератор", "Хелпер"
+            ]
+            
+            report_lines = [
+                "📊 **Суточный отчёт по норме (00:00 МСК)**",
+                "━━━━━━━━━━━━━━━━━━━"
+            ]
+            
+            if len(rows) > 1:
+                for row in rows[1:]:
+                    if len(row) >= 2 and row[0].strip() and row[1].strip():
+                        nick = row[0].strip()
+                        role = row[1].strip()
+                        
+                        matched_role = None
+                        for standard_role in roles_order:
+                            if standard_role.lower() in role.lower():
+                                matched_role = standard_role
+                                break
+                                
+                        if matched_role:
+                            status = "Освобожден от нормы" if nick in self.exempted_users else "Активен"
+                            time_norm = "30м/1ч"
+                            
+                            line = f"• **{nick}** • `{matched_role}`\n  └ Статус: {status} | {time_norm}"
+                            report_lines.append(line)
+                            
+            report_lines.append("━━━━━━━━━━━━━━━━━━━")
+            report_lines.append("✨ *Автоматическое обновление по списку персонала*")
+            
             if ch:
                 embed = discord.Embed(
-                    title="📊 Суточный отчёт по норме (00:00 МСК)",
-                    description="Автоматическая сверка списков персонала и выполнения онлайна успешно завершена.",
+                    title="👑 Суточный отчёт персонала VoidPulse",
+                    description="\n".join(report_lines),
                     color=discord.Color.green(),
                     timestamp=datetime.datetime.now()
                 )
