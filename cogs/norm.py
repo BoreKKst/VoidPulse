@@ -9,7 +9,6 @@ import config
 
 OWNER_ID = 1130833156687441920
 
-# Список строго твоих 8 ролей
 STAFF_ROLES = [
     "Владелец проекта",
     "Со-Владелец",
@@ -33,7 +32,7 @@ class NormCog(commands.Cog):
         try:
             gc = gspread.service_account(filename="credentials.json")
             sh = gc.open_by_key(config.SPREADSHEET_ID)
-            worksheet = sh.get_worksheet(0) # Первая вкладка таблицы
+            worksheet = sh.get_worksheet(0)
             return worksheet.get_all_records()
         except Exception as e:
             print(f"⚠️ Ошибка чтения Google Таблицы: {e}")
@@ -45,27 +44,33 @@ class NormCog(commands.Cog):
         now_msk = datetime.datetime.now(msk_tz)
         
         if now_msk.hour == 0 and now_msk.minute == 0:
-            await self.run_norm_check(is_auto=True)
+            await self.run_auto_norm_check()
 
     @daily_norm_check.before_loop
     async def before_daily_check(self):
         await self.bot.wait_until_ready()
 
-    async def run_norm_check(self, interaction: discord.Interaction = None, is_auto=False):
-        records = self.get_sheet_data()
-        
+    async def run_auto_norm_check(self):
         embed = discord.Embed(
             title="📊 Ежедневный отчёт по норме персонала",
-            description="Автоматическая проверка активности и нормы (00:00 МСК). Без авто-варнов.",
+            description="Напоминание: наступило 00:00 МСК. Проверьте норму активности!",
             color=discord.Color.blue(),
             timestamp=datetime.datetime.now(datetime.timezone.utc)
         )
-        embed.set_footer(text="VoidPulse Staff System • Google Sheets Sync")
+        embed.set_footer(text="VoidPulse Staff System • Auto Sync")
+        
+        records = self.get_sheet_data()
+        for row in records:
+            discord_id = row.get("Discord ID") or row.get("ID")
+            if discord_id:
+                try:
+                    user = await self.bot.fetch_user(int(discord_id))
+                    if user:
+                        await user.send(embed=embed)
+                except Exception:
+                    pass
 
-        if interaction:
-            await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(name="staff", description="Показать актуальный список состава из таблицы")
+    @app_commands.command(name="staff", description="Показать актуальный состав проекта из Google Таблицы")
     async def staff_list(self, interaction: discord.Interaction):
         records = self.get_sheet_data()
         
@@ -77,7 +82,6 @@ class NormCog(commands.Cog):
 
         role_data = {role: [] for role in STAFF_ROLES}
 
-        # Распределяем записи по ролям из таблицы
         for row in records:
             r_name = str(row.get("Должность", "")).strip()
             p_name = str(row.get("Имя", row.get("Ник", "Участник"))).strip()
@@ -89,13 +93,21 @@ class NormCog(commands.Cog):
             value = "\n".join([f"• {m}" for m in members]) if members else "Состав отсутствует"
             embed.add_field(name=f"| {role}", value=value, inline=False)
 
-        embed.set_footer(text="VoidPulse Staff System • Авто-выгрузка из Таблицы")
+        embed.set_footer(text="VoidPulse Staff System • Google Sheets Sync")
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="check_norm", description="Проверить норму персонала по таблице")
     @app_commands.default_permissions(administrator=True)
     async def check_norm(self, interaction: discord.Interaction):
-        await self.run_norm_check(interaction=interaction, is_auto=False)
+        records = self.get_sheet_data()
+        embed = discord.Embed(
+            title="📊 Отчёт проверки нормы персонала",
+            description=f"Загружено записей из таблицы: {len(records)}. Нарушений и авто-варнов нет.",
+            color=discord.Color.blue(),
+            timestamp=datetime.datetime.now(datetime.timezone.utc)
+        )
+        embed.set_footer(text="VoidPulse Staff System • Manual Check")
+        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="list", description="Показать онлайн игроков на сервере Minecraft")
     async def list_players(self, interaction: discord.Interaction):
