@@ -78,10 +78,12 @@ async def handle_register_mc(request):
 async def handle_check_2fa(request):
     secret_key = request.query.get("secret_key")
     mc_nick = request.query.get("mc_nick")
+    code = request.query.get("code")
+    
     auth_cog = bot_instance.get_cog("AuthVerificationCog")
     if auth_cog:
-        verified = auth_cog.check_player_verified(secret_key, mc_nick)
-        return web.json_response({"verified": verified, "status": "APPROVED" if verified else "PENDING"})
+        verified, status = auth_cog.check_and_consume_2fa(secret_key, mc_nick, code)
+        return web.json_response({"verified": verified, "status": status})
     return web.json_response({"verified": False, "status": "ERROR"}, status=500)
 
 async def start_web_server():
