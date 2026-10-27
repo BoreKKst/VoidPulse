@@ -37,13 +37,11 @@ HTML_TEMPLATE = """
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Outfit', sans-serif; }
         body { background-color: var(--bg-color); color: var(--text); display: flex; min-height: 100vh; }
         
-        /* Sidebar */
         sidebar { width: 260px; background: var(--sidebar-bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px; transition: 0.3s; }
         .logo { font-size: 22px; font-weight: 800; background: linear-gradient(135deg, var(--accent), var(--primary), var(--secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 30px; display: flex; align-items: center; gap: 10px; }
         .nav-item { padding: 12px 16px; border-radius: 10px; color: var(--text-muted); text-decoration: none; font-weight: 600; margin-bottom: 6px; transition: 0.2s; display: flex; align-items: center; gap: 10px; cursor: pointer; }
         .nav-item:hover, .nav-item.active { background: rgba(139, 92, 246, 0.15); color: var(--text); border-left: 4px solid var(--primary); }
 
-        /* Main Content */
         .main-content { flex: 1; padding: 30px; overflow-y: auto; max-width: 1100px; margin: 0 auto; }
         header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
         .menu-toggle { font-size: 22px; cursor: pointer; display: none; background: none; border: none; color: var(--text); }
@@ -86,7 +84,6 @@ HTML_TEMPLATE = """
             <div style="color: #22c55e; font-size: 13px; font-weight: 600;">● Online (24/7)</div>
         </header>
 
-        <!-- DASHBOARD TAB -->
         <div id="dashboard" class="tab-content active">
             <div class="grid">
                 <div class="card">
@@ -113,7 +110,6 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- ROLES TAB -->
         <div id="roles" class="tab-content">
             <div class="card">
                 <h2>👑 Настройка 8 Ролей состава</h2>
@@ -131,7 +127,6 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- TEXTS TAB -->
         <div id="texts" class="tab-content">
             <div class="card">
                 <h2>💬 Тексты и Шаблоны Сообщений</h2>
@@ -143,7 +138,6 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- FILES TAB -->
         <div id="files" class="tab-content">
             <div class="card">
                 <h2>📁 Редактор Конфигов</h2>
@@ -154,7 +148,6 @@ SPREADSHEET_ID = "1gAAyXJ20cAKBHCUzAl9H-v8DLm4aEaUMpwt2VLbuves"</textarea>
             </div>
         </div>
 
-        <!-- AI TAB -->
         <div id="ai" class="tab-content">
             <div class="card">
                 <h2>🤖 ИИ-Ассистент (Поставить задачу)</h2>
@@ -174,7 +167,6 @@ SPREADSHEET_ID = "1gAAyXJ20cAKBHCUzAl9H-v8DLm4aEaUMpwt2VLbuves"</textarea>
             </div>
         </div>
 
-        <!-- TICKETS TAB -->
         <div id="tickets" class="tab-content">
             <div class="card">
                 <h2>🎫 Активные тикеты с сайта</h2>
@@ -216,13 +208,23 @@ def reset_bot():
         time.sleep(1)
         os._exit(0)
     threading.Thread(target=delayed_exit).start()
-    return "<h2 style='color:white;background:#0b0f19;padding:40px;text-align:center;'>🔄 Система перезагружается... Сервер Render перезапустится через пару секунд.</h2>"
+    return """
+    <body style='background:#0b0f19;color:white;font-family:sans-serif;text-align:center;padding-top:100px;'>
+        <h2>🔄 Система перезагружается...</h2>
+        <p>Сервер перезапускается. Страница обновится автоматически через 12 секунд.</p>
+        <script>
+            setTimeout(() => {
+                window.location.href = "/";
+            }, 12000);
+        </script>
+    </body>
+    """
 
 @app.route('/update_settings', methods=['POST'])
 def update_settings():
     bot_settings['auto_norm'] = True if request.form.get('auto_norm') else False
     bot_settings['status_text'] = request.form.get('status_text', bot_settings['status_text'])
-    return redirect(url_for('/'))
+    return redirect(url_for('home'))
 
 @app.route('/ai_task', methods=['POST'])
 def ai_task():
