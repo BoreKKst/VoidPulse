@@ -2,7 +2,6 @@ import discord
 from discord.ext import commands
 import os
 import config
-from web import keep_alive
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -30,16 +29,14 @@ async def on_ready():
         os.remove("restart_queue.txt")
         try:
             owner = await bot.fetch_user(config.OWNER_ID)
-            embed = discord.Embed(title="🔄 Отчёт о перезапуске", description="✅ Все новые изменения успешно применены!\nБот подключён к Render и работает без ошибок.", color=discord.Color.green())
+            embed = discord.Embed(title="🔄 Перезапуск", description="✅ Бот успешно запущен без веб-панели!", color=discord.Color.green())
             await owner.send(embed=embed)
         except:
             pass
 
 if __name__ == "__main__":
-    keep_alive()
-    # Теперь бот точно найдет твой токен из Render!
     token = os.getenv("DISCORD_TOKEN")
     if token:
         bot.run(token, log_handler=None)
     else:
-        print("❌ ОШИБКА: Токен не найден! Проверьте переменные окружения.")
+        print("❌ ОШИБКА: Токен не найден!")
