@@ -2,6 +2,12 @@ import discord
 from discord.ext import commands
 import os
 
+# Подтягиваем токен: проверяем и TOKEN, и DISCORD_TOKEN
+token = os.getenv("TOKEN") or os.getenv("DISCORD_TOKEN")
+
+if not token:
+    print("❌ ОШИБКА: Токен не найден в переменных окружения Render!")
+
 class VoidPulseBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=discord.Intents.all())
@@ -23,4 +29,5 @@ class VoidPulseBot(commands.Bot):
             await guild.leave()
 
 bot = VoidPulseBot()
-bot.run(os.getenv("TOKEN"))
+if token:
+    bot.run(token)
