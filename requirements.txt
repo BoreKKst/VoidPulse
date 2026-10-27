@@ -1,5 +1,4 @@
 discord.py
+Flask
 gspread
-google-auth
-flask
 pytz
