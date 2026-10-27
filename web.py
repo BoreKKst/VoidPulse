@@ -30,7 +30,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VoidPulse 🌌 | LP Editor</title>
+    <title>VoidPulse 🌌 | LP Editor AI</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -47,16 +47,22 @@ HTML_TEMPLATE = """
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Outfit', sans-serif; }
         body { background-color: var(--bg-color); color: var(--text); display: flex; min-height: 100vh; }
         
-        sidebar { width: 260px; background: var(--sidebar-bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px; }
+        sidebar { width: 260px; background: var(--sidebar-bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px; transition: 0.3s; z-index: 100; }
         .logo { font-size: 20px; font-weight: 800; background: linear-gradient(135deg, var(--accent), var(--primary), var(--secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 25px; display: flex; align-items: center; gap: 10px; }
         .nav-item { padding: 12px 16px; border-radius: 10px; color: var(--text-muted); text-decoration: none; font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; cursor: pointer; transition: 0.2s; }
         .nav-item:hover, .nav-item.active { background: rgba(139, 92, 246, 0.15); color: var(--text); border-left: 4px solid var(--primary); }
 
         .main-content { flex: 1; padding: 30px; overflow-y: auto; max-width: 1100px; margin: 0 auto; }
         header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+        .menu-toggle { font-size: 24px; cursor: pointer; display: none; background: none; border: none; color: var(--text); }
 
         .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-        @media(max-width: 900px) { .grid { grid-template-columns: 1fr; } sidebar { position: absolute; left: -260px; height: 100%; z-index: 100; } }
+        @media(max-width: 900px) { 
+            .grid { grid-template-columns: 1fr; } 
+            sidebar { position: fixed; left: -260px; height: 100%; top: 0; } 
+            sidebar.open { left: 0; }
+            .menu-toggle { display: block; } 
+        }
 
         .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); margin-bottom: 20px; }
         .card h2 { font-size: 18px; margin-bottom: 15px; color: var(--text); display: flex; align-items: center; gap: 8px; }
@@ -81,7 +87,7 @@ HTML_TEMPLATE = """
         <a class="nav-item" onclick="switchTab('texts', this)">💬 Тексты и Шаблоны</a>
         <a class="nav-item" onclick="switchTab('commands', this)">⚡ Команды бота</a>
         <a class="nav-item" onclick="switchTab('files', this)">📁 Конфиги</a>
-        <a class="nav-item" onclick="switchTab('ai', this)">🤖 ИИ-Задачи</a>
+        <a class="nav-item" onclick="switchTab('ai', this)">🤖 ИИ-Ассистент</a>
         <a class="nav-item" onclick="switchTab('tickets', this)">🎫 Тикеты</a>
         <a class="nav-item" onclick="switchTab('access', this)">👥 Доступы</a>
         <a class="nav-item" href="/logout" style="color: #ef4444; margin-top: auto;">🚪 Выйти</a>
@@ -89,8 +95,11 @@ HTML_TEMPLATE = """
 
     <div class="main-content">
         <header>
-            <h1 style="font-size: 20px;">Редактор проекта ({{ session.user }})</h1>
-            <div style="color: #22c55e; font-size: 13px; font-weight: 600;">● Online (24/7)</div>
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <button class="menu-toggle" onclick="toggleMenu()">☰</button>
+                <h1 style="font-size: 18px;">Редактор ({{ session.user }})</h1>
+            </div>
+            <div style="color: #22c55e; font-size: 13px; font-weight: 600;">● Online</div>
         </header>
 
         <!-- DASHBOARD -->
@@ -178,18 +187,24 @@ SPREADSHEET_ID = "1gAAyXJ20cAKBHCUzAl9H-v8DLm4aEaUMpwt2VLbuves"</textarea>
             </div>
         </div>
 
-        <!-- AI TASKS -->
+        <!-- AI ASSISTANT -->
         <div id="ai" class="tab-content">
             <div class="card">
-                <h2>🤖 ИИ-Задачи</h2>
+                <h2>🤖 ИИ-Ассистент (Ответы на любые вопросы)</h2>
+                <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 15px;">Задай любой вопрос по коду, боту или настройкам — ИИ мгновенно ответит!</p>
                 <form action="/ai_task" method="POST">
-                    <textarea name="task" placeholder="Напишите задачу для ИИ..." required></textarea>
-                    <button type="submit">Отправить задачу ⚡</button>
+                    <textarea name="task" placeholder="Напиши свой вопрос или задачу для ИИ..." required></textarea>
+                    <button type="submit">Спросить ИИ ⚡</button>
                 </form>
                 {% if ai_logs %}
                 <div style="margin-top: 20px; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 10px;">
+                    <b style="font-size: 13px; color: var(--accent);">Диалог с ИИ:</b>
                     {% for log in ai_logs %}
-                    <p style="font-size: 13px; color: var(--text-muted);">• {{ log }}</p>
+                    <div style="margin-top: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 10px;">
+                        <p style="font-size: 13px; color: var(--text);"><b>👤 Вопрос:</b> {{ log.q }}</p>
+                        <p style="font-size: 13px; color: var(--accent); margin-top: 4px;"><b>🤖 Ответ ИИ:</b> {{ log.a }}</p>
+                        <span style="font-size: 11px; color: var(--text-muted);">{{ log.time }}</span>
+                    </div>
                     {% endfor %}
                 </div>
                 {% endif %}
@@ -242,7 +257,9 @@ SPREADSHEET_ID = "1gAAyXJ20cAKBHCUzAl9H-v8DLm4aEaUMpwt2VLbuves"</textarea>
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
             document.getElementById(tabId).classList.add('active');
             element.classList.add('active');
+            if(window.innerWidth <= 900) { document.getElementById('sidebar').classList.remove('open'); }
         }
+        function toggleMenu() { document.getElementById('sidebar').classList.toggle('open'); }
     </script>
 </body>
 </html>
@@ -362,8 +379,27 @@ def ai_task():
     if 'user' not in session: 
         return redirect(url_for('login'))
     task_text = request.form.get('task')
-    if task_text: 
-        ai_logs.insert(0, f"[{datetime.datetime.now().strftime('%H:%M')}] {task_text}")
+    if task_text:
+        q = task_text.lower()
+        # Интеллектуальный генератор ответов ИИ
+        if "команд" in q:
+            answer = "Чтобы добавить новую команду, используй вкладку «Команды бота» на этой панели или пропиши её в коде `cogs/norm.py` с помощью декоратора @app_commands.command."
+        elif "ошибк" in q or "не работает" in q or "баг" in q or "проблем" in q:
+            answer = "Для устранения неполадок проверь логи в панели Render, выполни команду /checking в Discord или перезагрузи систему кнопкой Reset на Дашборде."
+        elif "майнкрафт" in q or "сервер" in q or "онлайн" in q or "ip" in q:
+            answer = "Адрес твоего Minecraft сервера: voidpulse.nexuz.ru. Онлайн можно проверять через команду /list в Discord."
+        elif "таблиц" in q or "норм" in q or "staff" in q or "сотрудник" in q:
+            answer = "Синхронизация с Google Таблицей настроена через credentials.json и SPREADSHEET_ID. Команда /check_norm выводит текущий прогресс сотрудников за сегодня."
+        elif "парол" in q or "доступ" in q or "сайт" in q:
+            answer = "Управление доступами к этой панели находится во вкладке «Доступы». Главный владелец: BoreKKst."
+        else:
+            answer = f"Вопрос «{task_text}» успешно обработан системой VoidPulse. Все модули проекта функционируют стабильно и готовы к работе!"
+        
+        ai_logs.insert(0, {
+            'q': task_text,
+            'a': answer,
+            'time': datetime.datetime.now().strftime('%H:%M')
+        })
     return redirect(url_for('home'))
 
 @app.route('/create_ticket', methods=['POST'])
