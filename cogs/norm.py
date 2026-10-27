@@ -12,6 +12,9 @@ import json
 SERVER_IP = "voidpulse.nexuz.ru"
 STAFF_ROLES = ["Владелец проекта", "Со-Владелец", "Куратор", "Ст.Администратор", "Администратор", "Ст.Модератор", "Модератор", "Хелпер"]
 
+# Временное хранилище варнов в памяти (можно перенести в табличку, если нужно)
+warns_storage = {}
+
 class TicketModal(discord.ui.Modal, title="Создание тикета"):
     def __init__(self, category):
         super().__init__()
@@ -102,6 +105,70 @@ class NormCog(commands.Cog):
                 embed = discord.Embed(title="🔍 Использование команды", description=f"{status} {interaction.user.mention} использовал команду `/{command.name}`", color=color, timestamp=datetime.datetime.now(datetime.timezone.utc))
                 try: await log_channel.send(embed=embed)
                 except: pass
+
+    # --- СИСТЕМА ВАРНОВ (WARN / UNWARN / WARNS) ---
+    @app_commands.command(name="warn", description="Выдать предупреждение сотруднику/участнику (Владелец)")
+    @app_commands.describe(user="Кому выдать варн", reason="Причина выговора")
+    async def warn_user(self, interaction: discord.Interaction, user: discord.Member, reason: str):
+        if interaction.user.id != config.OWNER_ID:
+            return await interaction.response.send_message("❌ Доступно только владельцу!", ephemeral=True)
+        
+        uid = str(user.id)
+        if uid not in warns_storage:
+            warns_storage[uid] = []
+        
+        warns_storage[uid].append({
+            "reason": reason,
+            "date": datetime.datetime.now().strftime("%d.%m.%Y %H:%M"),
+            "author": interaction.user.name
+        })
+        
+        count = len(warns_storage[uid])
+        embed = discord.Embed(title="⚠️ Выдан выговор (Warn)", color=discord.Color.orange())
+        embed.add_field(name="Сотрудник", value=user.mention, inline=False)
+        embed.add_field(name="Причина", value=reason, inline=False)
+        embed.add_field(name="Всего выговоров", value=str(count), inline=False)
+        
+        # Пытаемся уведомить в ЛС
+        try:
+            await user.send(embed=discord.Embed(title="⚠️ Вы получили предупреждение", description=f"Причина: {reason}\nВсего варнов: {count}", color=discord.Color.orange()))
+        except: pass
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="unwarn", description="Снять последнее предупреждение (Владелец)")
+    @app_commands.describe(user="У кого снять варн")
+    async def unwarn_user(self, interaction: discord.Interaction, user: discord.Member):
+        if interaction.user.id != config.OWNER_ID:
+            return await interaction.response.send_message("❌ Доступно только владельцу!", ephemeral=True)
+        
+        uid = str(user.id)
+        if uid in warns_storage and warns_storage[uid]:
+            removed = warns_storage[uid].pop()
+            count = len(warns_storage[uid])
+            await interaction.response.send_message(f"✅ Снят последний варн с {user.mention} (Причина была: `{removed['reason']}`). Осталось варнов: {count}", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"⚠️ У пользователя {user.mention} нет активных выговоров.", ephemeral=True)
+
+    @app_commands.command(name="warns", description="Посмотреть предупреждения (укажи пользователя или оставь пустым)")
+    @app_commands.describe(user="Чьи варны посмотреть (оставь пустым для всех или себя)")
+    async def view_warns(self, interaction: discord.Interaction, user: discord.Member = None):
+        target = user or interaction.user
+        uid = str(target.id)
+        
+        if interaction.user.id != config.OWNER_ID and target != interaction.user:
+            return await interaction.response.send_message("❌ Вы можете смотреть только свои предупреждения.", ephemeral=True)
+
+        user_warns = warns_storage.get(uid, [])
+        
+        embed = discord.Embed(title=f"📋 Предупреждения: {target.name}", color=discord.Color.blue())
+        if not user_warns:
+            embed.description = "У пользователя нет активных выговоров. Чисто!"
+        else:
+            for idx, w in enumerate(user_warns, 1):
+                embed.add_field(name=f"Выговор #{idx} ({w['date']})", value=f"**Причина:** {w['reason']}\n*Выдал: {w['author']}*", inline=False)
+                
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # --- АДМИН КОМАНДЫ ---
     @app_commands.command(name="web", description="Секретная ссылка на панель управления (Владелец)")
@@ -201,30 +268,28 @@ class NormCog(commands.Cog):
         embed.add_field(
             name="👑 Административные (Только Владелец)",
             value=(
-                "**`/web`** — Секретная ссылка на веб-панель (LP Editor)\n"
-                "**`/check_norm`** — Выгрузка отчета по норме персонала\n"
-                "**`/say`** — Написать красивое сообщение от имени бота\n"
-                "**`/reload`** — Экстренный перезапуск систем бота\n"
-                "**`/status`** — Проверка технического статуса серверов\n"
-                "**`/checking`** — Проверка привязок (Таблицы, API)\n"
-                "**`/test`** — Тестовая системная команда"
+                "**`/web`** — Секретная ссылка на веб-панель\n"
+                "**`/check_norm`** — Отчет по норме персонала\n"
+                "**`/warn`** — Выдать выговор сотруднику\n"
+                "**`/unwarn`** — Снять выговор\n"
+                "**`/say`** — Написать от имени бота\n"
+                "**`/reload`** — Перезапуск бота\n"
+                "**`/status`** — Статус серверов\n"
+                "**`/checking`** — Проверка API\n"
+                "**`/test`** — Тест систем"
             ),
             inline=False
         )
         
         embed.add_field(
-            name="🛡️ Модерация (Персонал)",
-            value="**`/staff_help`** — Открыть шпаргалку и правила для стаффа",
-            inline=False
-        )
-        
-        embed.add_field(
-            name="🌐 Общие (Для всех)",
+            name="🛡️ Модерация и Общие",
             value=(
-                "**`/list`** — Узнать текущий онлайн на сервере\n"
-                "**`/staff`** — Посмотреть актуальный состав проекта\n"
-                "**`/связаться`** — Создать тикет (Вопрос, жалоба, донат)\n"
-                "**`/все_команды`** — Открыть это меню"
+                "**`/warns`** — Посмотреть предупреждения\n"
+                "**`/staff_help`** — Шпаргалка стаффа\n"
+                "**`/list`** — Онлайн майнкрафт сервера\n"
+                "**`/staff`** — Состав проекта\n"
+                "**`/связаться`** — Создать тикет\n"
+                "**`/все_команды`** — Этот список"
             ),
             inline=False
         )
