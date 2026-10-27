@@ -12,7 +12,7 @@ import json
 SERVER_IP = "voidpulse.nexuz.ru"
 STAFF_ROLES = ["Владелец проекта", "Со-Владелец", "Куратор", "Ст.Администратор", "Администратор", "Ст.Модератор", "Модератор", "Хелпер"]
 
-# Временное хранилище варнов в памяти (можно перенести в табличку, если нужно)
+# Хранилище варнов в памяти
 warns_storage = {}
 
 class TicketModal(discord.ui.Modal, title="Создание тикета"):
@@ -68,13 +68,18 @@ class NormCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.setup_channels.start()
+        self.sheet_norm_checker.start()
+
+    def cog_unload(self):
+        self.sheet_norm_checker.cancel()
 
     def get_sheet_data(self):
         try:
             gc = gspread.service_account(filename="credentials.json")
             sh = gc.open_by_key(config.SPREADSHEET_ID)
             return sh.get_worksheet(0).get_all_records()
-        except:
+        except Exception as e:
+            print(f"⚠️ Ошибка чтения таблицы: {e}")
             return []
 
     @tasks.loop(count=1)
@@ -91,6 +96,60 @@ class NormCog(commands.Cog):
                 try: await guild.create_text_channel("💬-чат-майнкрафт", topic="Чат сервера VoidPulse")
                 except: pass
 
+    # Автоматическая проверка нормы каждые 10 часов (или проверка статуса)
+    @tasks.loop(hours=10)
+    async def sheet_norm_checker(self):
+        await self.bot.wait_until_ready()
+        records = self.get_sheet_data()
+        if not records: return
+
+        completed_list = []
+        failed_list = []
+
+        for row in records:
+            discord_id = row.get("Discord ID") or row.get("ID")
+            name = row.get("Имя", row.get("Ник", "Сотрудник"))
+            role = row.get("Должность", "Сотрудник")
+            
+            try:
+                norm = float(row.get("Норма", row.get("Требуется", 1)))
+                done = float(row.get("Выполнено", row.get("Сегодня", 0)))
+            except:
+                norm, done = 1.0, 0.0
+
+            if discord_id:
+                try:
+                    user = await self.bot.fetch_user(int(discord_id))
+                    if done >= norm:
+                        completed_list.append(f"👤 **{name}** ({role}) — Выполнено ({done}/{norm})")
+                    else:
+                        failed_list.append(f"👤 **{name}** ({role}) — Не выполнено ({done}/{norm})")
+                        # Авто-варн если прошло 10 часов и не заполнено
+                        uid = str(user.id)
+                        if uid not in warns_storage: warns_storage[uid] = []
+                        warns_storage[uid].append({
+                            "reason": "Невыполнение нормы за 10 часов / отсутствие отчёта в таблице",
+                            "date": datetime.datetime.now().strftime("%d.%m.%Y %H:%M"),
+                            "author": "Система VoidPulse"
+                        })
+                        try:
+                            await user.send("⚠️ **Предупреждение:** Вы не выполнили норму в Google Таблице за отведенное время!")
+                        except: pass
+                except: pass
+
+        # Отчёт владельцу
+        try:
+            owner = await self.bot.fetch_user(config.OWNER_ID)
+            embed = discord.Embed(title="📊 Автоматический отчёт по норме персонала", color=discord.Color.purple(), timestamp=datetime.datetime.now(datetime.timezone.utc))
+            embed.add_field(name="🟢 Выполнили норму", value="\n".join(completed_list) if completed_list else "Никого", inline=False)
+            embed.add_field(name="🔴 Не выполнили (получили варн)", value="\n".join(failed_list) if failed_list else "Все молодцы!", inline=False)
+            await owner.send(embed=embed)
+        except: pass
+
+    @sheet_norm_checker.before_loop
+    async def before_checker(self):
+        await self.bot.wait_until_ready()
+
     @commands.Cog.listener()
     async def on_app_command_completion(self, interaction: discord.Interaction, command: app_commands.Command):
         guild = interaction.guild
@@ -106,17 +165,15 @@ class NormCog(commands.Cog):
                 try: await log_channel.send(embed=embed)
                 except: pass
 
-    # --- СИСТЕМА ВАРНОВ (WARN / UNWARN / WARNS) ---
-    @app_commands.command(name="warn", description="Выдать предупреждение сотруднику/участнику (Владелец)")
+    # --- СИСТЕМА ВАРНОВ ---
+    @app_commands.command(name="warn", description="Выдать предупреждение сотруднику (Владелец)")
     @app_commands.describe(user="Кому выдать варн", reason="Причина выговора")
     async def warn_user(self, interaction: discord.Interaction, user: discord.Member, reason: str):
         if interaction.user.id != config.OWNER_ID:
             return await interaction.response.send_message("❌ Доступно только владельцу!", ephemeral=True)
         
         uid = str(user.id)
-        if uid not in warns_storage:
-            warns_storage[uid] = []
-        
+        if uid not in warns_storage: warns_storage[uid] = []
         warns_storage[uid].append({
             "reason": reason,
             "date": datetime.datetime.now().strftime("%d.%m.%Y %H:%M"),
@@ -129,9 +186,7 @@ class NormCog(commands.Cog):
         embed.add_field(name="Причина", value=reason, inline=False)
         embed.add_field(name="Всего выговоров", value=str(count), inline=False)
         
-        # Пытаемся уведомить в ЛС
-        try:
-            await user.send(embed=discord.Embed(title="⚠️ Вы получили предупреждение", description=f"Причина: {reason}\nВсего варнов: {count}", color=discord.Color.orange()))
+        try: await user.send(embed=discord.Embed(title="⚠️ Вы получили предупреждение", description=f"Причина: {reason}\nВсего варнов: {count}", color=discord.Color.orange()))
         except: pass
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -150,8 +205,8 @@ class NormCog(commands.Cog):
         else:
             await interaction.response.send_message(f"⚠️ У пользователя {user.mention} нет активных выговоров.", ephemeral=True)
 
-    @app_commands.command(name="warns", description="Посмотреть предупреждения (укажи пользователя или оставь пустым)")
-    @app_commands.describe(user="Чьи варны посмотреть (оставь пустым для всех или себя)")
+    @app_commands.command(name="warns", description="Посмотреть предупреждения")
+    @app_commands.describe(user="Чьи варны посмотреть (оставь пустым для себя)")
     async def view_warns(self, interaction: discord.Interaction, user: discord.Member = None):
         target = user or interaction.user
         uid = str(target.id)
@@ -160,10 +215,9 @@ class NormCog(commands.Cog):
             return await interaction.response.send_message("❌ Вы можете смотреть только свои предупреждения.", ephemeral=True)
 
         user_warns = warns_storage.get(uid, [])
-        
         embed = discord.Embed(title=f"📋 Предупреждения: {target.name}", color=discord.Color.blue())
         if not user_warns:
-            embed.description = "У пользователя нет активных выговоров. Чисто!"
+            embed.description = "У пользователя нет активных выговоров."
         else:
             for idx, w in enumerate(user_warns, 1):
                 embed.add_field(name=f"Выговор #{idx} ({w['date']})", value=f"**Причина:** {w['reason']}\n*Выдал: {w['author']}*", inline=False)
@@ -171,23 +225,12 @@ class NormCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # --- АДМИН КОМАНДЫ ---
-    @app_commands.command(name="web", description="Секретная ссылка на панель управления (Владелец)")
-    async def web_panel(self, interaction: discord.Interaction):
-        if interaction.user.id != config.OWNER_ID: return await interaction.response.send_message("❌ Доступ закрыт.", ephemeral=True)
-        link = f"https://voidpulse-hhjp.onrender.com/?token={config.WEB_SECRET_TOKEN}"
-        embed = discord.Embed(title="🌌 Доступ к панели (Никому не давать!)", description=f"Твоя зашифрованная ссылка для входа без пароля:\n**[ВОЙТИ В ПАНЕЛЬ]({link})**", color=discord.Color.purple())
-        try:
-            await interaction.user.send(embed=embed)
-            await interaction.response.send_message("✅ Секретная ссылка отправлена тебе в ЛС!", ephemeral=True)
-        except:
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @app_commands.command(name="check_norm", description="Проверить норму (Владелец)")
+    @app_commands.command(name="check_norm", description="Проверить норму вручную по таблице (Владелец)")
     async def check_norm(self, interaction: discord.Interaction):
         if interaction.user.id != config.OWNER_ID: return await interaction.response.send_message("❌", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
         records = self.get_sheet_data()
-        embed = discord.Embed(title="📊 Проверка нормы", color=discord.Color.blue())
+        embed = discord.Embed(title="📊 Проверка нормы по таблице", color=discord.Color.blue())
         if not records: embed.description = "⚠️ Данные не найдены."
         else:
             for row in records[:12]:
@@ -214,7 +257,7 @@ class NormCog(commands.Cog):
     @app_commands.command(name="checking", description="Проверка API привязок (Владелец)")
     async def checking_system(self, interaction: discord.Interaction):
         if interaction.user.id != config.OWNER_ID: return await interaction.response.send_message("❌", ephemeral=True)
-        await interaction.response.send_message("🔍 Интеграции с Google Sheets и Flask стабильны.", ephemeral=True)
+        await interaction.response.send_message("🔍 Интеграции с Google Sheets стабильны.", ephemeral=True)
         
     @app_commands.command(name="test", description="Тест систем (Владелец)")
     async def test_system(self, interaction: discord.Interaction):
@@ -254,7 +297,7 @@ class NormCog(commands.Cog):
     @app_commands.command(name="staff_help", description="Памятка для персонала")
     async def staff_help(self, interaction: discord.Interaction):
         embed = discord.Embed(title="🛡️ Памятка для персонала", color=discord.Color.blue())
-        embed.add_field(name="📌 Основное", value="- Норма проверяется автоматически в 00:00 МСК.\n- Данные берутся из Google Таблиц.", inline=False)
+        embed.add_field(name="📌 Основное", value="- Норма проверяется автоматически каждые 10 часов.\n- Данные берутся из Google Таблиц.", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="все_команды", description="Навигатор по всем командам бота")
@@ -264,12 +307,10 @@ class NormCog(commands.Cog):
             description="Полный список доступных команд и их назначение:",
             color=discord.Color.teal()
         )
-        
         embed.add_field(
             name="👑 Административные (Только Владелец)",
             value=(
-                "**`/web`** — Секретная ссылка на веб-панель\n"
-                "**`/check_norm`** — Отчет по норме персонала\n"
+                "**`/check_norm`** — Проверка нормы по таблице\n"
                 "**`/warn`** — Выдать выговор сотруднику\n"
                 "**`/unwarn`** — Снять выговор\n"
                 "**`/say`** — Написать от имени бота\n"
@@ -280,7 +321,6 @@ class NormCog(commands.Cog):
             ),
             inline=False
         )
-        
         embed.add_field(
             name="🛡️ Модерация и Общие",
             value=(
@@ -293,7 +333,6 @@ class NormCog(commands.Cog):
             ),
             inline=False
         )
-        
         embed.set_footer(text="Служба безопасности VoidPulse")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
