@@ -1,12 +1,10 @@
 import discord
 from discord.ext import commands
 import os
+import asyncio
+from aiohttp import web
 
-# Подтягиваем токен: проверяем и TOKEN, и DISCORD_TOKEN
 token = os.getenv("TOKEN") or os.getenv("DISCORD_TOKEN")
-
-if not token:
-    print("❌ ОШИБКА: Токен не найден в переменных окружения Render!")
 
 class VoidPulseBot(commands.Bot):
     def __init__(self):
@@ -28,6 +26,27 @@ class VoidPulseBot(commands.Bot):
         if not any(cid in self.allowed_channels for cid in channel_ids):
             await guild.leave()
 
-bot = VoidPulseBot()
-if token:
-    bot.run(token)
+# Заглушка порта для Render
+async def handle(request):
+    return web.Response(text="VoidPulse Bot: ONLINE")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"🌐 Веб-порт {port} подхвачен для Render!")
+
+async def main():
+    bot = VoidPulseBot()
+    if token:
+        await start_web_server()
+        await bot.start(token)
+    else:
+        print("❌ ОШИБКА: Токен не найден в переменных окружения!")
+
+if __name__ == "__main__":
+    asyncio.run(main())
