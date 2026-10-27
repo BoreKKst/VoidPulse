@@ -16,6 +16,10 @@ class StaffCog(commands.Cog):
     def cog_unload(self):
         self.daily_norm_check.cancel()
 
+    def get_lists_sheet(self):
+        gc = gspread.service_account(filename="credentials.json")
+        return gc.open_by_key(os.getenv("SPREADSHEET_ID") or "1gAAyXJ20cAKBHCUzAl9H-v8DLm4aEaUMpwt2VLbuves").worksheet("Списки")
+
     @tasks.loop(minutes=1)
     async def daily_norm_check(self):
         msk_tz = pytz.timezone('Europe/Moscow')
@@ -29,8 +33,7 @@ class StaffCog(commands.Cog):
 
     async def execute_norm_check(self):
         try:
-            gc = gspread.service_account(filename="credentials.json")
-            sh = gc.open_by_key(os.getenv("SPREADSHEET_ID") or "1gAAyXJ20cAKBHCUzAl9H-v8DLm4aEaUMpwt2VLbuves")
+            ws = self.get_lists_sheet()
             ch = self.bot.get_channel(self.personnel_channel_id)
             if ch:
                 embed = discord.Embed(
@@ -105,23 +108,48 @@ class StaffCog(commands.Cog):
             await ch.send(embed=embed)
         await interaction.response.send_message("✅ Снятие зафиксировано в кадровом логе.", ephemeral=True)
 
-    @app_commands.command(name="staff", description="Показать структуру руководства и персонала")
+    @app_commands.command(name="staff", description="Автоматический вывод состава персонала из таблицы «Списки»")
     async def staff_list(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title="👑 ИЕРАРХИЯ И СОСТАВ ПРОЕКТА VOIDPULSE",
-            description=(
-                "**| Владелец проекта**\n• Участник\n\n"
-                "**| Со-Владелец**\n• Участник\n\n"
-                "**| Куратор**\nСостав отсутствует\n\n"
-                "**| Ст.Администратор**\nСостав отсутствует\n\n"
-                "**| Администратор**\nСостав отсутствует\n\n"
-                "**| Ст.Модератор**\nСостав отсутствует\n\n"
-                "**| Модератор**\nСостав отсутствует\n\n"
-                "**| Хелпер**\nСостав отсутствует"
-            ),
-            color=discord.Color.gold()
-        )
-        await interaction.response.send_message(embed=embed)
+        try:
+            ws = self.get_lists_sheet()
+            rows = ws.get_all_values()
+            
+            roles_order = [
+                "Владелец проекта", "Со-Владелец", "Куратор",
+                "Ст.Администратор", "Администратор", "Ст.Модератор",
+                "Модератор", "Хелпер"
+            ]
+            
+            staff_by_role = {role: [] for role in roles_order}
+            
+            # Читаем данные из таблицы (столбец A — Ник, столбец B — Должность)
+            if len(rows) > 1:
+                for row in rows[1:]:
+                    if len(row) >= 2 and row[0].strip() and row[1].strip():
+                        nick = row[0].strip()
+                        role = row[1].strip()
+                        for standard_role in roles_order:
+                            if standard_role.lower() in role.lower():
+                                staff_by_role[standard_role].append(nick)
+                                break
+
+            description_lines = []
+            for role in roles_order:
+                members = staff_by_role[role]
+                if members:
+                    members_str = "\n".join([f"• `{m}`" for m in members])
+                else:
+                    members_str = "Состав отсутствует"
+                description_lines.append(f"**| {role}**\n{members_str}\n")
+
+            embed = discord.Embed(
+                title="👑 АКТУАЛЬНЫЙ СОСТАВ (Из таблицы «Списки»)",
+                description="\n".join(description_lines),
+                color=discord.Color.gold()
+            )
+            await interaction.response.send_message(embed=embed)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Ошибка чтения таблицы «Списки»: {e}", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(StaffCog(bot))
