@@ -161,6 +161,55 @@ class NormCog(commands.Cog):
                 try: await log_channel.send(embed=embed)
                 except: pass
 
+    # --- ПРОВЕРКА ВСЕХ ТЕКСТОВ И ШАБЛОНОВ ---
+    @app_commands.command(name="check_texts", description="Посмотреть все текущие тексты и шаблоны бота (Владелец)")
+    async def check_texts(self, interaction: discord.Interaction):
+        if interaction.user.id != config.OWNER_ID:
+            return await interaction.response.send_message("❌ Доступно только владельцу!", ephemeral=True)
+
+        embed = discord.Embed(
+            title="📝 Аудит текстов и шаблонов VoidPulse",
+            description="Ниже собраны все ключевые тексты, которые использует бот в сообщениях и тикетах:",
+            color=discord.Color.gold()
+        )
+
+        embed.add_field(
+            name="🎫 Тексты в меню тикетов (/связаться)",
+            value=(
+                "• **Кнопка 1:** Технический вопрос (⚙️)\n"
+                "• **Кнопка 2:** Жалоба на персонал (🛡️)\n"
+                "• **Кнопка 3:** Покупка (💎)\n"
+                "• **Кнопка 4:** Связь с создателем (📞)\n"
+                "• **Заголовок модал-окна:** Опишите вопрос/проблему"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="⚠️ Тексты предупреждений (Варны и Нормы)",
+            value=(
+                "• **При авто-варне нормы:** `⚠️ Предупреждение: Вы не выполнили норму в Google Таблице за 10 часов!`\n"
+                "• **При ручном /warn:** `⚠️ Вы получили предупреждение. Причина: ...`\n"
+                "• **Заголовок отчета 10ч:** `📊 Отчёт по норме персонала (10ч)`"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="👑 Список ролей стаффа в таблице (/staff)",
+            value=", ".join([f"`{r}`" for r in STAFF_ROLES]),
+            inline=False
+        )
+
+        embed.add_field(
+            name="🌐 IP Майнкрафт сервера",
+            value=f"`{SERVER_IP}`",
+            inline=False
+        )
+
+        embed.set_footer(text="Оцени тексты и скажи, что именно нужно изменить!")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     # --- ВАРНЫ ---
     @app_commands.command(name="warn", description="Выдать предупреждение сотруднику (Владелец)")
     @app_commands.describe(user="Кому выдать варн", reason="Причина выговора")
@@ -306,6 +355,7 @@ class NormCog(commands.Cog):
         embed.add_field(
             name="👑 Административные (Только Владелец)",
             value=(
+                "**`/check_texts`** — Проверить все тексты бота\n"
                 "**`/check_norm`** — Проверка нормы по таблице\n"
                 "**`/warn`** — Выдать выговор сотруднику\n"
                 "**`/unwarn`** — Снять выговор\n"
