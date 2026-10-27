@@ -4,10 +4,22 @@ from discord import app_commands
 import datetime
 import pytz
 import os
+import gspread
 import config
 
-# Твой личный Discord ID
 OWNER_ID = 1130833156687441920
+
+# Список строго твоих 8 ролей
+STAFF_ROLES = [
+    "Владелец проекта",
+    "Со-Владелец",
+    "Куратор",
+    "Ст.Администратор",
+    "Администратор",
+    "Ст.Модератор",
+    "Модератор",
+    "Хелпер"
+]
 
 class NormCog(commands.Cog):
     def __init__(self, bot):
@@ -17,7 +29,16 @@ class NormCog(commands.Cog):
     def cog_unload(self):
         self.daily_norm_check.cancel()
 
-    # Ежедневная проверка в 00:00 по МСК
+    def get_sheet_data(self):
+        try:
+            gc = gspread.service_account(filename="credentials.json")
+            sh = gc.open_by_key(config.SPREADSHEET_ID)
+            worksheet = sh.get_worksheet(0) # Первая вкладка таблицы
+            return worksheet.get_all_records()
+        except Exception as e:
+            print(f"⚠️ Ошибка чтения Google Таблицы: {e}")
+            return []
+
     @tasks.loop(minutes=1)
     async def daily_norm_check(self):
         msk_tz = pytz.timezone("Europe/Moscow")
@@ -31,20 +52,47 @@ class NormCog(commands.Cog):
         await self.bot.wait_until_ready()
 
     async def run_norm_check(self, interaction: discord.Interaction = None, is_auto=False):
+        records = self.get_sheet_data()
+        
         embed = discord.Embed(
             title="📊 Ежедневный отчёт по норме персонала",
-            description="Проверка отработанного времени и активности за день (00:00 МСК).",
+            description="Автоматическая проверка активности и нормы (00:00 МСК). Без авто-варнов.",
             color=discord.Color.blue(),
             timestamp=datetime.datetime.now(datetime.timezone.utc)
         )
-        embed.set_footer(text="VoidPulse Staff System • Ежедневная проверка")
+        embed.set_footer(text="VoidPulse Staff System • Google Sheets Sync")
 
         if interaction:
             await interaction.response.send_message(embed=embed)
-        
-        # Автоматическая проверка без выдачи варнов
 
-    @app_commands.command(name="check_norm", description="Проверить норму персонала и расслать отчёт в ЛС")
+    @app_commands.command(name="staff", description="Показать актуальный список состава из таблицы")
+    async def staff_list(self, interaction: discord.Interaction):
+        records = self.get_sheet_data()
+        
+        embed = discord.Embed(
+            title="👑 АКТУАЛЬНЫЙ СПИСОК СОСТАВА ПРОЕКТА",
+            color=discord.Color.purple(),
+            timestamp=datetime.datetime.now(datetime.timezone.utc)
+        )
+
+        role_data = {role: [] for role in STAFF_ROLES}
+
+        # Распределяем записи по ролям из таблицы
+        for row in records:
+            r_name = str(row.get("Должность", "")).strip()
+            p_name = str(row.get("Имя", row.get("Ник", "Участник"))).strip()
+            if r_name in role_data:
+                role_data[r_name].append(p_name)
+
+        for role in STAFF_ROLES:
+            members = role_data[role]
+            value = "\n".join([f"• {m}" for m in members]) if members else "Состав отсутствует"
+            embed.add_field(name=f"| {role}", value=value, inline=False)
+
+        embed.set_footer(text="VoidPulse Staff System • Авто-выгрузка из Таблицы")
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="check_norm", description="Проверить норму персонала по таблице")
     @app_commands.default_permissions(administrator=True)
     async def check_norm(self, interaction: discord.Interaction):
         await self.run_norm_check(interaction=interaction, is_auto=False)
@@ -60,7 +108,6 @@ class NormCog(commands.Cog):
 
     @app_commands.command(name="web", description="Секретная команда статуса веб-панели (Только для владельца в ЛС)")
     async def web_panel(self, interaction: discord.Interaction):
-        # Проверка: только для тебя и только в ЛС (DM)
         if interaction.user.id != OWNER_ID:
             await interaction.response.send_message("❌ У вас нет доступа к этой команде!", ephemeral=True)
             return
@@ -77,7 +124,6 @@ class NormCog(commands.Cog):
         )
         embed.add_field(name="🌐 URL Панели", value="https://voidpulse-hhjp.onrender.com", inline=False)
         embed.add_field(name="🟢 Статус", value="В сети (Flask Ping Active)", inline=True)
-        embed.add_field(name="⏱️ Мониторинг", value="24/7 Uptime", inline=True)
         embed.set_footer(text="VoidPulse Security System • Owner Private Access")
 
         await interaction.response.send_message(embed=embed)
@@ -100,7 +146,7 @@ class NormCog(commands.Cog):
         if action == "ban":
             embed = discord.Embed(
                 title="⛔ СРОЧНАЯ БЛОКИРОВКА",
-                description=f"Пользователь {user.mention} был заблокирован по причине: **Слишком крут для этого сервера**! 😂",
+                description=f"Пользователь {user.mention} заблокирован по причине: **Слишком крут для этого сервера**! 😂",
                 color=discord.Color.red()
             )
         else:
