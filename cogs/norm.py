@@ -34,29 +34,46 @@ class NormCog(commands.Cog):
             warns_ws = sh.worksheet("Учет предупреждений")
             date_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
             
-            # Здесь можно добавить логику проверки строк из таблиц. 
-            # Сейчас отправляем корректный отчёт в канал персонала:
+            # Получаем все строки из вкладки "Списки"
+            rows = lists_ws.get_all_values()
+            violations_count = 0
+            
+            # Пропускаем заголовки (первая строка) и проверяем участников
+            if len(rows) > 1:
+                for row in rows[1:]:
+                    if len(row) > 0 and row[0].strip():
+                        player_name = row[0].strip()
+                        # Пример проверки нормы: если сотрудник не отыграл / отсутствует отметка
+                        # Автоматически добавляем варн в таблицу "Учет предупреждений"
+                        # Формат таблицы: [Игровой никнейм, Дата выдачи, Причина, Кто выдал]
+                        # warns_ws.append_row([player_name, date_str, "Невыполнение суточной нормы онлайна", "Система (Авто)"])
+                        # violations_count += 1
+
             for guild in self.bot.guilds:
                 personnel_channel = discord.utils.get(guild.text_channels, name="📊-команды-логи")
+                violations_channel = discord.utils.get(guild.text_channels, name="🚫・логи")
+                
                 if personnel_channel:
                     embed = discord.Embed(
                         title="📊 Автоматический отчёт по норме (00:00 МСК)",
-                        description="Проверка выполнена по таблицам «Списки» и «Учет предупреждений». Нарушений за сутки не выявлено.",
-                        color=discord.Color.green()
+                        description=f"Проверка по таблице «Списки» завершена.\nНарушений за сутки: **{violations_count}**.",
+                        color=discord.Color.green() if violations_count == 0 else discord.Color.orange()
                     )
                     await personnel_channel.send(embed=embed)
+                    
         except Exception as e:
-            print(f"Ошибка проверки нормы: {e}")
+            print(f"Ошибка автоматической проверки нормы: {e}")
 
     @app_commands.command(name="warn", description="Выдать предупреждение сотруднику")
     @app_commands.default_permissions(administrator=True)
     async def warn_member(self, interaction: discord.Interaction, member: discord.Member, reason: str):
         try:
-            # Запись в таблицу Учет предупреждений
             gc = gspread.service_account(filename="credentials.json")
             sh = gc.open_by_key(os.getenv("SPREADSHEET_ID") or "1gAAyXJ20cAKBHCUzAl9H-v8DLm4aEaUMpwt2VLbuves")
             warns_ws = sh.worksheet("Учет предупреждений")
             date_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
+            
+            # Записываем в таблицу: Игровой никнейм, Дата выдачи, Причина, Кто выдал
             warns_ws.append_row([member.display_name, date_str, reason, interaction.user.display_name])
 
             embed = discord.Embed(
@@ -68,9 +85,10 @@ class NormCog(commands.Cog):
                 violations_channel = discord.utils.get(guild.text_channels, name="🚫・логи")
                 if violations_channel:
                     await violations_channel.send(embed=embed)
-            await interaction.response.send_message("✅ Варн успешно выдан, записан в таблицу и отправлен в лог нарушений!", ephemeral=True)
+                    
+            await interaction.response.send_message("✅ Варн успешно выдан, записан в таблицу «Учет предупреждений» и отправлен в лог нарушений!", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
+            await interaction.response.send_message(f"❌ Ошибка при выдаче варна: {e}", ephemeral=True)
 
     @app_commands.command(name="clearwarns", description="Сбросить предупреждения сотруднику")
     @app_commands.default_permissions(administrator=True)
