@@ -277,8 +277,10 @@ LOGIN_TEMPLATE = """
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        if request.form.get('username') in allowed_users and allowed_users[request.form.get('username')] == request.form.get('password'):
-            session['user'] = request.form.get('username')
+        user_input = request.form.get('username')
+        pass_input = request.form.get('password')
+        if user_input in allowed_users and allowed_users[user_input] == pass_input:
+            session['user'] = user_input
             return redirect(url_for('home'))
         return render_template_string(LOGIN_TEMPLATE)
     return render_template_string(LOGIN_TEMPLATE)
@@ -290,68 +292,91 @@ def logout():
 
 @app.route('/')
 def home():
-    if 'user' not in session: return redirect(url_for('login'))
+    if 'user' not in session: 
+        return redirect(url_for('login'))
     return render_template_string(HTML_TEMPLATE, tickets=tickets_list, settings=bot_settings, ai_logs=ai_logs, custom_commands=custom_commands, users_list=allowed_users.keys())
 
 @app.route('/reset', methods=['POST'])
 def reset_bot():
-    if 'user' not in session: return redirect(url_for('login'))
+    if 'user' not in session: 
+        return redirect(url_for('login'))
     threading.Thread(target=lambda: (time.sleep(1), os._exit(0))).start()
     return "<body style='background:#0b0f19;color:white;text-align:center;padding-top:100px;'><h2>🔄 Перезагрузка...</h2><script>setTimeout(() => window.location.href='/', 12000);</script></body>"
 
 @app.route('/update_settings', methods=['POST'])
 def update_settings():
-    if 'user' not in session: return redirect(url_for('login'))
+    if 'user' not in session: 
+        return redirect(url_for('login'))
     bot_settings['auto_norm'] = True if request.form.get('auto_norm') else False
     bot_settings['status_text'] = request.form.get('status_text', bot_settings['status_text'])
     return redirect(url_for('home'))
 
 @app.route('/update_texts', methods=['POST'])
 def update_texts():
-    if 'user' not in session: return redirect(url_for('login'))
+    if 'user' not in session: 
+        return redirect(url_for('login'))
     bot_settings['norm_text'] = request.form.get('norm_text', bot_settings['norm_text'])
     return redirect(url_for('home'))
 
 @app.route('/add_command', methods=['POST'])
 def add_command():
-    if 'user' not in session: return redirect(url_for('login'))
+    if 'user' not in session: 
+        return redirect(url_for('login'))
     global custom_commands
-    name, resp = request.form.get('cmd_name').strip().lstrip('/'), request.form.get('cmd_response')
+    name = request.form.get('cmd_name')
+    resp = request.form.get('cmd_response')
     if name and resp:
-        custom_commands = [c for c in custom_commands if c['name'] != name]
-        custom_commands.append({"name": name, "response": resp})
+        clean_name = name.strip().lstrip('/')
+        custom_commands = [c for c in custom_commands if c['name'] != clean_name]
+        custom_commands.append({"name": clean_name, "response": resp})
     return redirect(url_for('home'))
 
 @app.route('/delete_command/<name>')
 def delete_command(name):
-    if 'user' not in session: return redirect(url_for('login'))
+    if 'user' not in session: 
+        return redirect(url_for('login'))
     global custom_commands
     custom_commands = [c for c in custom_commands if c['name'] != name]
     return redirect(url_for('home'))
 
 @app.route('/add_user', methods=['POST'])
 def add_user():
-    if 'user' not in session: return redirect(url_for('login'))
-    if request.form.get('new_user') and request.form.get('new_pass'):
-        allowed_users[request.form.get('new_user').strip()] = request.form.get('new_pass').strip()
+    if 'user' not in session: 
+        return redirect(url_for('login'))
+    new_u = request.form.get('new_user')
+    new_p = request.form.get('new_pass')
+    if new_u and new_p:
+        allowed_users[new_u.strip()] = new_p.strip()
     return redirect(url_for('home'))
 
 @app.route('/delete_user/<usr>')
 def delete_user(usr):
-    if 'user' not in session or usr == "BoreKKst": return redirect(url_for('login'))
-    if usr in allowed_users: del allowed_users[usr]
+    if 'user' not in session or usr == "BoreKKst": 
+        return redirect(url_for('login'))
+    if usr in allowed_users: 
+        del allowed_users[usr]
     return redirect(url_for('home'))
 
 @app.route('/ai_task', methods=['POST'])
 def ai_task():
-    if 'user' not in session: return redirect(url_for('login'))
-    if request.form.get('task'): ai_logs.insert(0, f"[{datetime.datetime.now().strftime('%H:%M')}] {request.form.get('task')}")
+    if 'user' not in session: 
+        return redirect(url_for('login'))
+    task_text = request.form.get('task')
+    if task_text: 
+        ai_logs.insert(0, f"[{datetime.datetime.now().strftime('%H:%M')}] {task_text}")
     return redirect(url_for('home'))
 
 @app.route('/create_ticket', methods=['POST'])
 def create_ticket():
-    if request.form.get('username') and request.form.get('message'):
-        tickets_list.insert(0, {'username': request.form.get('username'), 'category': request.form.get('category'), 'message': request.form.get('message'), 'time': datetime.datetime.now().strftime('%H:%M')})
+    uname = request.form.get('username')
+    umsg = request.form.get('message')
+    if uname and umsg:
+        tickets_list.insert(0, {
+            'username': uname, 
+            'category': request.form.get('category', 'Общий'), 
+            'message': umsg, 
+            'time': datetime.datetime.now().strftime('%H:%M')
+        })
     return redirect(url_for('home'))
 
 def keep_alive():
