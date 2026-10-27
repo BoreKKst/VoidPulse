@@ -7,7 +7,8 @@ import os
 import gspread
 import config
 
-OWNER_ID = 1130833156687441920
+# Твой новый ID владельца
+OWNER_ID = 1374053953301385308
 
 STAFF_ROLES = [
     "Владелец проекта",
@@ -96,9 +97,12 @@ class NormCog(commands.Cog):
         embed.set_footer(text="VoidPulse Staff System • Google Sheets Sync")
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="check_norm", description="Проверить норму персонала по таблице")
-    @app_commands.default_permissions(administrator=True)
+    @app_commands.command(name="check_norm", description="Проверить норму персонала по таблице (Только для владельца)")
     async def check_norm(self, interaction: discord.Interaction):
+        if interaction.user.id != OWNER_ID:
+            await interaction.response.send_message("❌ Эта команда доступна только владельцу бота!", ephemeral=True)
+            return
+            
         records = self.get_sheet_data()
         embed = discord.Embed(
             title="📊 Отчёт проверки нормы персонала",
@@ -140,10 +144,13 @@ class NormCog(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="say", description="Написать сообщение от имени бота")
+    @app_commands.command(name="say", description="Написать сообщение от имени бота (Только для владельца)")
     @app_commands.describe(text="Текст сообщения", channel="Канал для отправки")
-    @app_commands.default_permissions(administrator=True)
     async def say_command(self, interaction: discord.Interaction, text: str, channel: discord.TextChannel = None):
+        if interaction.user.id != OWNER_ID:
+            await interaction.response.send_message("❌ Эта команда доступна только владельцу бота!", ephemeral=True)
+            return
+            
         target_channel = channel or interaction.channel
         embed = discord.Embed(
             description=text,
@@ -152,9 +159,13 @@ class NormCog(commands.Cog):
         await target_channel.send(embed=embed)
         await interaction.response.send_message("✅ Сообщение отправлено!", ephemeral=True)
 
-    @app_commands.command(name="troll", description="Шуточная команда для троллинга")
+    @app_commands.command(name="troll", description="Шуточная команда для троллинга (Только для владельца)")
     @app_commands.describe(user="Пользователь", action="Действие")
     async def troll_command(self, interaction: discord.Interaction, user: discord.Member, action: str = "ban"):
+        if interaction.user.id != OWNER_ID:
+            await interaction.response.send_message("❌ Эта команда доступна только владельцу бота!", ephemeral=True)
+            return
+            
         if action == "ban":
             embed = discord.Embed(
                 title="⛔ СРОЧНАЯ БЛОКИРОВКА",
@@ -164,7 +175,7 @@ class NormCog(commands.Cog):
         else:
             embed = discord.Embed(
                 title="🤡 Троллинг",
-                description=f"{user.mention} попался на секретную магию VoidPulse!",
+                description=f"Пользователь {user.mention} попался на секретную магию VoidPulse!",
                 color=discord.Color.gold()
             )
         await interaction.response.send_message(embed=embed)
