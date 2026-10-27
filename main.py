@@ -24,12 +24,9 @@ class VoidPulseBot(commands.Bot):
                 await self.load_extension(f'cogs.{filename[:-3]}')
         await self.tree.sync()
 
-    async def on_guild_join(self, guild):
-        channel_ids = [c.id for c in guild.channels]
-        if not any(cid in self.allowed_channels for cid in channel_ids):
-            await guild.leave()
+bot_instance = VoidPulseBot()
 
-async def handle(request):
+async def handle_home(request):
     ram = psutil.virtual_memory()
     cpu = psutil.cpu_percent()
     uptime_sec = int(time.time() - start_time)
@@ -41,48 +38,68 @@ async def handle(request):
     <html lang="ru">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>VoidPulse Web Console</title>
         <style>
-            body {{ background-color: #0b0c10; color: #66fcf1; font-family: 'Segoe UI', monospace; padding: 20px; text-align: center; }}
-            .container {{ max-width: 650px; margin: 40px auto; background: #1f2833; padding: 30px; border-radius: 12px; box-shadow: 0 0 20px rgba(102, 252, 241, 0.2); border: 1px solid #45a29e; }}
-            h1 {{ color: #ffffff; text-shadow: 0 0 10px #66fcf1; margin-bottom: 25px; }}
-            .card {{ background: #0b0c10; margin: 12px 0; padding: 15px; border-radius: 8px; text-align: left; font-size: 1.1em; border-left: 4px solid #66fcf1; }}
-            .status {{ color: #45a29e; font-weight: bold; }}
-            .highlight {{ color: #ffffff; font-weight: bold; }}
+            body {{ background-color: #0b0c10; color: #66fcf1; font-family: sans-serif; text-align: center; padding: 20px; }}
+            .container {{ max-width: 600px; margin: auto; background: #1f2833; padding: 25px; border-radius: 10px; border: 1px solid #45a29e; }}
+            h1 {{ color: #fff; }}
+            .card {{ background: #0b0c10; margin: 10px 0; padding: 12px; border-radius: 6px; text-align: left; }}
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>⚡ VOIDPULSE WEB CONSOLE</h1>
-            <div class="card">СТАТУС СЕРВЕРА: <span class="status">● ONLINE (ACTIVE 24/7)</span></div>
-            <div class="card">НАГРУЗКА ЦП: <span class="highlight">{cpu}%</span></div>
-            <div class="card">ОЗУ: <span class="highlight">{ram.percent}%</span> ({round(ram.used / 1024 / 1024)} MB / {round(ram.total / 1024 / 1024)} MB)</div>
-            <div class="card">ОПЕРАЦИОННАЯ СИСТЕМА: <span class="highlight">Linux / Render Cloud Container</span></div>
-            <div class="card">АПТАЙМ НЕПРЕРЫВНО: <span class="highlight">{hours}ч {mins}м {secs}с</span></div>
+            <h1>⚡ VOIDPULSE API & CONSOLE</h1>
+            <div class="card">СТАТУС: ONLINE</div>
+            <div class="card">ЦП: {cpu}% | ОЗУ: {ram.percent}%</div>
+            <div class="card">АПТАЙМ: {hours}ч {mins}м {secs}с</div>
         </div>
     </body>
     </html>
     """
     return web.Response(text=html_content, content_type='text/html')
 
+async def handle_register_mc(request):
+    try:
+        data = await request.json()
+        auth_cog = bot_instance.get_cog("AuthVerificationCog")
+        if auth_cog:
+            success, msg = await auth_cog.register_mc_code(
+                data.get("secret_key"),
+                data.get("mc_nick"),
+                data.get("code")
+            )
+            if success:
+                return web.json_response({"status": "success", "message": msg}, status=200)
+            return web.json_response({"status": "error", "message": msg}, status=400)
+        return web.json_response({"status": "error", "message": "Auth cog not loaded"}, status=500)
+    except Exception as e:
+        return web.json_response({"status": "error", "message": str(e)}, status=400)
+
+async def handle_check_2fa(request):
+    secret_key = request.query.get("secret_key")
+    mc_nick = request.query.get("mc_nick")
+    auth_cog = bot_instance.get_cog("AuthVerificationCog")
+    if auth_cog:
+        verified = auth_cog.check_player_verified(secret_key, mc_nick)
+        return web.json_response({"verified": verified, "status": "APPROVED" if verified else "PENDING"})
+    return web.json_response({"verified": False, "status": "ERROR"}, status=500)
+
 async def start_web_server():
     app = web.Application()
-    app.router.add_get("/", handle)
+    app.router.add_get("/", handle_home)
+    app.router.add_post("/register_mc_code", handle_register_mc)
+    app.router.add_get("/check_2fa_status", handle_check_2fa)
+    
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.getenv("PORT", 8080))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    print(f"🌐 Веб-консоль запущена на порту {port}")
 
 async def main():
-    bot = VoidPulseBot()
     if token:
         await start_web_server()
-        await bot.start(token)
-    else:
-        print("❌ ОШИБКА: Токен не найден!")
+        await bot_instance.start(token)
 
 if __name__ == "__main__":
     asyncio.run(main())
