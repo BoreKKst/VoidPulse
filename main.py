@@ -27,46 +27,18 @@ class VoidPulseBot(commands.Bot):
 bot_instance = VoidPulseBot()
 
 async def handle_home(request):
-    ram = psutil.virtual_memory()
-    cpu = psutil.cpu_percent()
-    uptime_sec = int(time.time() - start_time)
-    mins, secs = divmod(uptime_sec, 60)
-    hours, mins = divmod(mins, 60)
-    
-    html_content = f"""
-    <!DOCTYPE html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <title>VoidPulse Web Console</title>
-        <style>
-            body {{ background-color: #0b0c10; color: #66fcf1; font-family: sans-serif; text-align: center; padding: 20px; }}
-            .container {{ max-width: 600px; margin: auto; background: #1f2833; padding: 25px; border-radius: 10px; border: 1px solid #45a29e; }}
-            h1 {{ color: #fff; }}
-            .card {{ background: #0b0c10; margin: 10px 0; padding: 12px; border-radius: 6px; text-align: left; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>⚡ VOIDPULSE API & CONSOLE</h1>
-            <div class="card">СТАТУС: ONLINE</div>
-            <div class="card">ЦП: {cpu}% | ОЗУ: {ram.percent}%</div>
-            <div class="card">АПТАЙМ: {hours}ч {mins}м {secs}с</div>
-        </div>
-    </body>
-    </html>
-    """
-    return web.Response(text=html_content, content_type='text/html')
+    return web.Response(text="VoidPulse Auth API: ONLINE", content_type='text/html')
 
 async def handle_register_mc(request):
     try:
         data = await request.json()
         auth_cog = bot_instance.get_cog("AuthVerificationCog")
         if auth_cog:
-            success, msg = await auth_cog.register_mc_code(
+            success, msg = await auth_cog.register_mc_session(
                 data.get("secret_key"),
                 data.get("mc_nick"),
-                data.get("code")
+                data.get("code"),
+                data.get("session_id")
             )
             if success:
                 return web.json_response({"status": "success", "message": msg}, status=200)
@@ -79,10 +51,11 @@ async def handle_check_2fa(request):
     secret_key = request.query.get("secret_key")
     mc_nick = request.query.get("mc_nick")
     code = request.query.get("code")
+    session_id = request.query.get("session_id")
     
     auth_cog = bot_instance.get_cog("AuthVerificationCog")
     if auth_cog:
-        verified, status = auth_cog.check_and_consume_2fa(secret_key, mc_nick, code)
+        verified, status = auth_cog.atomic_consume_session(secret_key, mc_nick, code, session_id)
         return web.json_response({"verified": verified, "status": status})
     return web.json_response({"verified": False, "status": "ERROR"}, status=500)
 
