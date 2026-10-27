@@ -27,7 +27,8 @@ class ModerationCog(commands.Cog):
             embed = discord.Embed(
                 title="⚠️ Выдан выговор (Warn)",
                 description=f"**Сотрудник:** {member.mention}\n**Причина:** {reason}\n**Выдал:** {interaction.user.mention}",
-                color=discord.Color.orange()
+                color=discord.Color.orange(),
+                timestamp=datetime.datetime.now()
             )
             ch = self.bot.get_channel(self.violations_channel_id)
             if ch:
@@ -36,7 +37,7 @@ class ModerationCog(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
-    @app_commands.command(name="unwarn", description="Снять последнее предупреждение (Администратор и выше)")
+    @app_commands.command(name="unwarn", description="Снять последнее предупреждение")
     @app_commands.default_permissions(administrator=True)
     async def unwarn_member(self, interaction: discord.Interaction, member: discord.Member):
         await interaction.response.defer(ephemeral=True)
@@ -51,9 +52,10 @@ class ModerationCog(commands.Cog):
                 if rows[i] and member.display_name.lower() in rows[i][0].lower():
                     await asyncio.to_thread(ws.delete_rows, i + 1)
                     embed = discord.Embed(
-                        title="🛡️ Снятие выговора",
+                        title="🛡️ Снятие выговора (Unwarn)",
                         description=f"**Сотрудник:** {member.mention}\n**Снял:** {interaction.user.mention}",
-                        color=discord.Color.green()
+                        color=discord.Color.green(),
+                        timestamp=datetime.datetime.now()
                     )
                     ch = self.bot.get_channel(self.violations_channel_id)
                     if ch:
@@ -81,7 +83,7 @@ class ModerationCog(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка чтения данных: {e}", ephemeral=True)
 
-    @app_commands.command(name="clearwarns", description="Очистить абсолютно все предупреждения указанного пользователя")
+    @app_commands.command(name="clearwarns", description="Очистить все предупреждения пользователя")
     @app_commands.default_permissions(administrator=True)
     async def clearwarns(self, interaction: discord.Interaction, member: discord.Member):
         await interaction.response.defer(ephemeral=True)
@@ -93,7 +95,15 @@ class ModerationCog(commands.Cog):
                 if rows[i] and member.display_name.lower() in rows[i][0].lower():
                     await asyncio.to_thread(ws.delete_rows, i + 1)
                     deleted += 1
-            await interaction.followup.send(f"✅ Очищено записей из таблицы: **{deleted}** для {member.mention}.", ephemeral=True)
+            embed = discord.Embed(
+                title="🧹 Полная очистка выговоров",
+                description=f"**Сотрудник:** {member.mention}\n**Очищено записей:** {deleted}\n**Администратор:** {interaction.user.mention}",
+                color=discord.Color.gold()
+            )
+            ch = self.bot.get_channel(self.violations_channel_id)
+            if ch:
+                await ch.send(embed=embed)
+            await interaction.followup.send(f"✅ Очищено записей: **{deleted}** для {member.mention}.", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
@@ -105,12 +115,42 @@ class ModerationCog(commands.Cog):
         embed = discord.Embed(
             title="🚫 Исключение с сервера (Kick)",
             description=f"**Пользователь:** {member.mention}\n**Причина:** {reason}\n**Модератор:** {interaction.user.mention}",
-            color=discord.Color.dark_red()
+            color=discord.Color.dark_red(),
+            timestamp=datetime.datetime.now()
         )
         ch = self.bot.get_channel(self.violations_channel_id)
         if ch:
             await ch.send(embed=embed)
         await interaction.followup.send(f"✅ Пользователь {member.mention} исключен.", ephemeral=True)
+
+    @app_commands.command(name="mclog", description="Зафиксировать нарушение/действие из Minecraft в канал нарушений")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.choices(action=[
+        app_commands.Choice(name="Бан", value="Бан"),
+        app_commands.Choice(name="Пермбан", value="Пермбан"),
+        app_commands.Choice(name="Темп-бан", value="Темп-бан"),
+        app_commands.Choice(name="Варн", value="Варн"),
+        app_commands.Choice(name="Анварн", value="Анварн"),
+        app_commands.Choice(name="Кик", value="Кик"),
+        app_commands.Choice(name="Мут", value="Мут"),
+        app_commands.Choice(name="Анмут", value="Анмут"),
+        app_commands.Choice(name="Темп-мут", value="Темп-мут"),
+        app_commands.Choice(name="GM 1 (Креатив)", value="GM 1"),
+        app_commands.Choice(name="Выдача OP", value="Выдача OP"),
+        app_commands.Choice(name="Снятие OP (Deop)", value="Снятие OP")
+    ])
+    async def mclog(self, interaction: discord.Interaction, action: str, player: str, admin: str, reason: str = "Не указана"):
+        await interaction.response.defer(ephemeral=True)
+        embed = discord.Embed(
+            title=f"⛏️ [Minecraft Log] {action}",
+            description=f"**Игрок/Нарушитель:** `{player}`\n**Действие:** `{action}`\n**Причина/Детали:** {reason}\n**Выдал/Исполнитель:** `{admin}`",
+            color=discord.Color.dark_purple(),
+            timestamp=datetime.datetime.now()
+        )
+        ch = self.bot.get_channel(self.violations_channel_id)
+        if ch:
+            await ch.send(embed=embed)
+        await interaction.followup.send("✅ Серверное действие Minecraft зафиксировано в канале нарушений.", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(ModerationCog(bot))

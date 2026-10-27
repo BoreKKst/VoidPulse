@@ -40,13 +40,14 @@ class StaffCog(commands.Cog):
                 embed = discord.Embed(
                     title="📊 Суточный отчёт по норме (00:00 МСК)",
                     description="Автоматическая сверка списков персонала и выполнения онлайна успешно завершена.",
-                    color=discord.Color.green()
+                    color=discord.Color.green(),
+                    timestamp=datetime.datetime.now()
                 )
                 await ch.send(embed=embed)
         except Exception as e:
             print(f"Ошибка проверки нормы: {e}")
 
-    @app_commands.command(name="norm", description="Посмотреть статус своей нормы или другого сотрудника")
+    @app_commands.command(name="norm", description="Посмотреть статус своей нормы")
     async def norm(self, interaction: discord.Interaction, member: discord.Member = None):
         target = member or interaction.user
         is_exempt = target.id in self.exempted_users
@@ -57,23 +58,34 @@ class StaffCog(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="check_norm", description="Принудительная проверка нормы состава (Администратор+)")
+    @app_commands.command(name="check_norm", description="Принудительная проверка нормы состава")
     @app_commands.default_permissions(administrator=True)
     async def check_norm(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         await self.execute_norm_check()
-        await interaction.response.send_message("✅ Принудительная проверка нормы запущена, отчет отправлен в канал персонала.", ephemeral=True)
+        await interaction.followup.send("✅ Отчет по норме отправлен в канал персонала.", ephemeral=True)
 
-    @app_commands.command(name="norm_exempt", description="Освободить сотрудника от нормы (Только Куратор и выше)")
+    @app_commands.command(name="norm_exempt", description="Освободить сотрудника от нормы")
     @app_commands.default_permissions(administrator=True)
     async def norm_exempt(self, interaction: discord.Interaction, member: discord.Member):
+        await interaction.response.defer(ephemeral=True)
         allowed = ["Владелец проекта", "Со-Владелец", "Куратор"]
         if not any(r.name in allowed for r in interaction.user.roles):
-            return await interaction.response.send_message("❌ Команда доступна только Куратору и выше.", ephemeral=True)
+            return await interaction.followup.send("❌ Команда доступна только Куратору и выше.", ephemeral=True)
         
         self.exempted_users.add(member.id)
-        await interaction.response.send_message(f"✅ Сотрудник {member.mention} освобожден от выполнения суточной нормы.", ephemeral=True)
+        embed = discord.Embed(
+            title="🛡️ Освобождение от нормы (Norm Exempt)",
+            description=f"**Сотрудник:** {member.mention}\n**Статус:** Освобожден от нормы\n**Выдал:** {interaction.user.mention}",
+            color=discord.Color.green(),
+            timestamp=datetime.datetime.now()
+        )
+        ch = self.bot.get_channel(self.personnel_channel_id)
+        if ch:
+            await ch.send(embed=embed)
+        await interaction.followup.send(f"✅ Сотрудник {member.mention} освобожден от суточной нормы.", ephemeral=True)
 
-    @app_commands.command(name="appoint", description="Назначить сотрудника на должность")
+    @app_commands.command(name="appoint", description="Назначить / Повысить сотрудника")
     @app_commands.default_permissions(administrator=True)
     @app_commands.choices(role=[
         app_commands.Choice(name="Владелец проекта", value="Владелец проекта"),
@@ -86,30 +98,34 @@ class StaffCog(commands.Cog):
         app_commands.Choice(name="Хелпер", value="Хелпер")
     ])
     async def appoint_member(self, interaction: discord.Interaction, member: discord.Member, role: str):
+        await interaction.response.defer(ephemeral=True)
         embed = discord.Embed(
-            title="📈 Назначение на должность",
+            title="📈 Назначение / Повышение в должности",
             description=f"**Сотрудник:** {member.mention}\n**Новая должность:** {role}\n**Назначил:** {interaction.user.mention}",
-            color=discord.Color.blue()
+            color=discord.Color.blue(),
+            timestamp=datetime.datetime.now()
         )
         ch = self.bot.get_channel(self.personnel_channel_id)
         if ch:
             await ch.send(embed=embed)
-        await interaction.response.send_message("✅ Назначение зафиксировано в кадровом логе.", ephemeral=True)
+        await interaction.followup.send("✅ Кадровое изменение зафиксировано в канале персонала.", ephemeral=True)
 
-    @app_commands.command(name="unstaff", description="Снять сотрудника с должности")
+    @app_commands.command(name="unstaff", description="Снять / Понизить сотрудника")
     @app_commands.default_permissions(administrator=True)
-    async def unstaff_member(self, interaction: discord.Interaction, member: discord.Member, reason: str = "По решению руководства"):
+    async def unstaff_member(self, interaction: discord.Interaction, member: discord.Member, reason: str = "По решение руководства"):
+        await interaction.response.defer(ephemeral=True)
         embed = discord.Embed(
-            title="📉 Снятие с должности",
+            title="📉 Снятие / Понижение с должности",
             description=f"**Сотрудник:** {member.mention}\n**Причина:** {reason}\n**Снял:** {interaction.user.mention}",
-            color=discord.Color.red()
+            color=discord.Color.red(),
+            timestamp=datetime.datetime.now()
         )
         ch = self.bot.get_channel(self.personnel_channel_id)
         if ch:
             await ch.send(embed=embed)
-        await interaction.response.send_message("✅ Снятие зафиксировано в кадровом логе.", ephemeral=True)
+        await interaction.followup.send("✅ Снятие/понижение зафиксировано в канале персонала.", ephemeral=True)
 
-    @app_commands.command(name="staff", description="Автоматический вывод состава персонала из таблицы «Списки»")
+    @app_commands.command(name="staff", description="Показать иерархию и состав из таблицы «Списки»")
     async def staff_list(self, interaction: discord.Interaction):
         await interaction.response.defer()
         try:
@@ -144,11 +160,14 @@ class StaffCog(commands.Cog):
                 description_lines.append(f"**| {role}**\n{members_str}\n")
 
             embed = discord.Embed(
-                title="👑 АКТУАЛЬНЫЙ СОСТАВ (Из таблицы «Списки»)",
+                title="👑 АКТУАЛЬНЫЙ СОСТАВ ПРОЕКТА VOIDPULSE",
                 description="\n".join(description_lines),
                 color=discord.Color.gold()
             )
-            await interaction.followup.send(embed=embed)
+            ch = self.bot.get_channel(self.personnel_channel_id)
+            if ch:
+                await ch.send(embed=embed)
+            await interaction.followup.send("✅ Актуальный состав выведен в канал персонала.", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка чтения таблицы «Списки»: {e}", ephemeral=True)
 
