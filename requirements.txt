@@ -1,5 +1,0 @@
-discord.py
-gspread
-flask
-python-dotenv
-pytz
