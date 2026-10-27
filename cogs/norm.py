@@ -178,23 +178,10 @@ class NormCog(commands.Cog):
         embed = discord.Embed(title="📞 Связь с создателем", description="Создатель и владелец: **BoreKKst**\nСвязь через официальный дискорд-сервер VoidPulse.", color=discord.Color.gold())
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="coin", description="Монетка")
-    async def coin(self, interaction: discord.Interaction):
-        await interaction.response.send_message(f"🪙 Результат: **{random.choice(['Орёл!', 'Решка!'])}**")
-
-    @app_commands.command(name="roll", description="Рандом 1-100")
-    async def roll(self, interaction: discord.Interaction):
-        await interaction.response.send_message(f"🎲 Число: **{random.randint(1, 100)}**")
-
-    @app_commands.command(name="hug", description="Обнять")
-    async def hug(self, interaction: discord.Interaction, user: discord.Member):
-        await interaction.response.send_message(f"🫂 {interaction.user.mention} обнял(-а) {user.mention}!")
-
-    @app_commands.command(name="8ball", description="Шар предсказаний")
-    async def ball(self, interaction: discord.Interaction, question: str):
-        ans = random.choice(["Да! ✨", "Нет. ❌", "Возможно. 🤔", "Сомнений нет. 🔮"])
-        embed = discord.Embed(title="🎱 Магический Шар", description=f"Вопрос: {question}\nОтвет: **{ans}**", color=discord.Color.blue())
-        await interaction.response.send_message(embed=embed)
+    @app_commands.command(name="обнять", description="Дружески обнять участника")
+    @app_commands.describe(user="Кого обнять?")
+    async def hug_user(self, interaction: discord.Interaction, user: discord.Member):
+        await interaction.response.send_message(f"🫂 {interaction.user.mention} крепко-крепко обнял(-а) {user.mention}!")
 
 async def setup(bot):
     await bot.add_cog(NormCog(bot))
