@@ -10,9 +10,12 @@ import urllib.request
 import json
 
 SERVER_IP = "voidpulse.nexuz.ru"
-STAFF_ROLES = ["Владелец проекта", "Со-Владелец", "Куратор", "Ст.Администратор", "Администратор", "Ст.Модератор", "Модератор", "Хелпер"]
+# Высшие роли, которых бот вообще не трогает по норме
+EXEMPT_ROLES = ["Владелец проекта", "Со-Владелец", "Куратор"]
+STAFF_ROLES = EXEMPT_ROLES + ["Ст.Администратор", "Администратор", "Ст.Модератор", "Модератор", "Хелпер"]
 
 warns_storage = {}
+exempted_users = set() # Список ID пользователей, у которых норма отключена через /norm_exempt
 
 class TicketModal(discord.ui.Modal, title="Создание тикета"):
     def __init__(self, category):
@@ -87,7 +90,7 @@ class NormCog(commands.Cog):
         for guild in self.bot.guilds:
             log_channel = discord.utils.get(guild.text_channels, name="📊-команды-логи")
             if not log_channel:
-                try: await guild.create_text_channel("📊-команды-логи", topic="Логи использования команд всеми участниками")
+                try: await guild.create_text_channel("📊-команды-логи", topic="Логи команд и отчёты персонала")
                 except: pass
             
             mc_channel = discord.utils.get(guild.text_channels, name="💬-чат-майнкрафт")
@@ -95,6 +98,7 @@ class NormCog(commands.Cog):
                 try: await guild.create_text_channel("💬-чат-майнкрафт", topic="Чат сервера VoidPulse")
                 except: pass
 
+    # Автоматическая проверка нормы каждые 10 часов (отчёт строго в стафф-канал)
     @tasks.loop(hours=10)
     async def sheet_norm_checker(self):
         await self.bot.wait_until_ready()
@@ -107,7 +111,11 @@ class NormCog(commands.Cog):
         for row in records:
             discord_id = row.get("Discord ID") or row.get("ID")
             name = row.get("Имя", row.get("Ник", "Сотрудник"))
-            role = row.get("Должность", "Сотрудник")
+            role = str(row.get("Должность", "Сотрудник")).strip()
+            
+            # Пропускаем руководство и тех, у кого норма отключена через /norm_exempt
+            if role in EXEMPT_ROLES or (discord_id and str(discord_id) in exempted_users):
+                continue
             
             try:
                 norm = float(row.get("Норма", row.get("Требуется", 1)))
@@ -129,18 +137,22 @@ class NormCog(commands.Cog):
                             "date": datetime.datetime.now().strftime("%d.%m.%Y %H:%M"),
                             "author": "Система VoidPulse"
                         })
-                        try:
-                            await user.send("⚠️ **Предупреждение:** Вы не выполнили норму в Google Таблице за 10 часов!")
-                        except: pass
                 except: pass
 
-        try:
-            owner = await self.bot.fetch_user(config.OWNER_ID)
-            embed = discord.Embed(title="📊 Отчёт по норме персонала (10ч)", color=discord.Color.purple(), timestamp=datetime.datetime.now(datetime.timezone.utc))
-            embed.add_field(name="🟢 Выполнили норму", value="\n".join(completed_list) if completed_list else "Никого", inline=False)
-            embed.add_field(name="🔴 Не выполнили (варн)", value="\n".join(failed_list) if failed_list else "Все молодцы!", inline=False)
-            await owner.send(embed=embed)
-        except: pass
+        # Отправляем отчёт СТРОГО в стафф-канал на серверах (никаких ЛС)
+        for guild in self.bot.guilds:
+            log_channel = discord.utils.get(guild.text_channels, name="📊-команды-логи")
+            if log_channel:
+                embed = discord.Embed(
+                    title="📊 Отчёт по норме персонала (10ч)", 
+                    description="Руководство (Владельцы, Со-Владельцы, Кураторы) и исключенные сотрудники не проверялись.",
+                    color=discord.Color.purple(), 
+                    timestamp=datetime.datetime.now(datetime.timezone.utc)
+                )
+                embed.add_field(name="🟢 Выполнили норму", value="\n".join(completed_list) if completed_list else "Никого", inline=False)
+                embed.add_field(name="🔴 Не выполнили (авто-варн)", value="\n".join(failed_list) if failed_list else "Все молодцы!", inline=False)
+                try: await log_channel.send(embed=embed)
+                except: pass
 
     @sheet_norm_checker.before_loop
     async def before_checker(self):
@@ -161,54 +173,20 @@ class NormCog(commands.Cog):
                 try: await log_channel.send(embed=embed)
                 except: pass
 
-    # --- ПРОВЕРКА ВСЕХ ТЕКСТОВ И ШАБЛОНОВ ---
-    @app_commands.command(name="check_texts", description="Посмотреть все текущие тексты и шаблоны бота (Владелец)")
-    async def check_texts(self, interaction: discord.Interaction):
+    # --- УПРАВЛЕНИЕ ИСКЛЮЧЕНИЯМИ НОРМЫ ---
+    @app_commands.command(name="norm_exempt", description="Вкл/выкл норму для упомянутого сотрудника (Владелец)")
+    @app_commands.describe(user="Кого исключить или вернуть в норму")
+    async def norm_exempt(self, interaction: discord.Interaction, user: discord.Member):
         if interaction.user.id != config.OWNER_ID:
             return await interaction.response.send_message("❌ Доступно только владельцу!", ephemeral=True)
-
-        embed = discord.Embed(
-            title="📝 Аудит текстов и шаблонов VoidPulse",
-            description="Ниже собраны все ключевые тексты, которые использует бот в сообщениях и тикетах:",
-            color=discord.Color.gold()
-        )
-
-        embed.add_field(
-            name="🎫 Тексты в меню тикетов (/связаться)",
-            value=(
-                "• **Кнопка 1:** Технический вопрос (⚙️)\n"
-                "• **Кнопка 2:** Жалоба на персонал (🛡️)\n"
-                "• **Кнопка 3:** Покупка (💎)\n"
-                "• **Кнопка 4:** Связь с создателем (📞)\n"
-                "• **Заголовок модал-окна:** Опишите вопрос/проблему"
-            ),
-            inline=False
-        )
-
-        embed.add_field(
-            name="⚠️ Тексты предупреждений (Варны и Нормы)",
-            value=(
-                "• **При авто-варне нормы:** `⚠️ Предупреждение: Вы не выполнили норму в Google Таблице за 10 часов!`\n"
-                "• **При ручном /warn:** `⚠️ Вы получили предупреждение. Причина: ...`\n"
-                "• **Заголовок отчета 10ч:** `📊 Отчёт по норме персонала (10ч)`"
-            ),
-            inline=False
-        )
-
-        embed.add_field(
-            name="👑 Список ролей стаффа в таблице (/staff)",
-            value=", ".join([f"`{r}`" for r in STAFF_ROLES]),
-            inline=False
-        )
-
-        embed.add_field(
-            name="🌐 IP Майнкрафт сервера",
-            value=f"`{SERVER_IP}`",
-            inline=False
-        )
-
-        embed.set_footer(text="Оцени тексты и скажи, что именно нужно изменить!")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        
+        uid = str(user.id)
+        if uid in exempted_users:
+            exempted_users.remove(uid)
+            await interaction.response.send_message(f"✅ Пользователь {user.mention} **возвращен** в систему проверки нормы.", ephemeral=True)
+        else:
+            exempted_users.add(uid)
+            await interaction.response.send_message(f"✅ Пользователь {user.mention} **освобожден от нормы** (теперь бот не будет его проверять и варнить).", ephemeral=True)
 
     # --- ВАРНЫ ---
     @app_commands.command(name="warn", description="Выдать предупреждение сотруднику (Владелец)")
@@ -275,11 +253,13 @@ class NormCog(commands.Cog):
         if interaction.user.id != config.OWNER_ID: return await interaction.response.send_message("❌", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
         records = self.get_sheet_data()
-        embed = discord.Embed(title="📊 Проверка нормы", color=discord.Color.blue())
+        embed = discord.Embed(title="📊 Ручная проверка нормы (Руководство и исключенные пропущены)", color=discord.Color.blue())
         if not records: embed.description = "⚠️ Данные не найдены."
         else:
-            for row in records[:12]:
-                embed.add_field(name=f"👤 {row.get('Имя', 'Сотрудник')} ({row.get('Должность', 'Сотрудник')})", value=f"🎯 Требуется: **{row.get('Норма', '0')}** | 🟢 Выполнено: **{row.get('Выполнено', '0')}**", inline=False)
+            for row in records[:15]:
+                role = str(row.get("Должность", "")).strip()
+                if role in EXEMPT_ROLES: continue
+                embed.add_field(name=f"👤 {row.get('Имя', 'Сотрудник')} ({role})", value=f"🎯 Требуется: **{row.get('Норма', '0')}** | 🟢 Выполнено: **{row.get('Выполнено', '0')}**", inline=False)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="say", description="Написать от имени бота (Владелец)")
@@ -342,7 +322,7 @@ class NormCog(commands.Cog):
     @app_commands.command(name="staff_help", description="Памятка для персонала")
     async def staff_help(self, interaction: discord.Interaction):
         embed = discord.Embed(title="🛡️ Памятка для персонала", color=discord.Color.blue())
-        embed.add_field(name="📌 Основное", value="- Норма проверяется автоматически каждые 10 часов.\n- Данные берутся из Google Таблиц.", inline=False)
+        embed.add_field(name="📌 Основное", value="- Норма проверяется автоматически каждые 10 часов.\n- Отчёты публикуются в стафф-канале.", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="все_команды", description="Навигатор по всем командам бота")
@@ -355,9 +335,9 @@ class NormCog(commands.Cog):
         embed.add_field(
             name="👑 Административные (Только Владелец)",
             value=(
-                "**`/check_texts`** — Проверить все тексты бота\n"
+                "**`/norm_exempt`** — Вкл/выкл норму для сотрудника\n"
                 "**`/check_norm`** — Проверка нормы по таблице\n"
-                "**`/warn`** — Выдать выговор сотруднику\n"
+                "**`/warn`** — Выдать выговор\n"
                 "**`/unwarn`** — Снять выговор\n"
                 "**`/say`** — Написать от имени бота\n"
                 "**`/reload`** — Перезапуск бота\n"
