@@ -3,364 +3,72 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import datetime
 import pytz
-import os
-import config
 import gspread
-import urllib.request
-import json
-
-SERVER_IP = "voidpulse.nexuz.ru"
-# Высшие роли, которых бот вообще не трогает по норме
-EXEMPT_ROLES = ["Владелец проекта", "Со-Владелец", "Куратор"]
-STAFF_ROLES = EXEMPT_ROLES + ["Ст.Администратор", "Администратор", "Ст.Модератор", "Модератор", "Хелпер"]
-
-warns_storage = {}
-exempted_users = set() # Список ID пользователей, у которых норма отключена через /norm_exempt
-
-class TicketModal(discord.ui.Modal, title="Создание тикета"):
-    def __init__(self, category):
-        super().__init__()
-        self.category = category
-
-    message = discord.ui.TextInput(
-        label="Опишите вопрос/проблему",
-        style=discord.TextStyle.paragraph,
-        required=True,
-        max_length=1000
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title=f"🎫 Тикет: {self.category}",
-            description=f"**От:** {interaction.user.mention}\n\n**Текст:**\n{self.message.value}",
-            color=discord.Color.purple(),
-            timestamp=datetime.datetime.now(datetime.timezone.utc)
-        )
-        try:
-            owner = await interaction.client.fetch_user(config.OWNER_ID)
-            await owner.send(embed=embed)
-        except: pass
-            
-        if getattr(config, "TICKET_CHANNEL_ID", 0) != 0:
-            channel = interaction.client.get_channel(config.TICKET_CHANNEL_ID)
-            if channel: await channel.send(embed=embed)
-
-        await interaction.response.send_message("✅ Ваш тикет успешно создан и передан администрации.", ephemeral=True)
-
-class TicketSelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="Технический вопрос", emoji="⚙️"),
-            discord.SelectOption(label="Жалоба на персонал", emoji="🛡️"),
-            discord.SelectOption(label="Покупка", emoji="💎"),
-            discord.SelectOption(label="Связь с создателем", emoji="📞")
-        ]
-        super().__init__(placeholder="Выберите категорию...", min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(TicketModal(self.values[0]))
-
-class TicketView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(TicketSelect())
-
+import os
 
 class NormCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.setup_channels.start()
-        self.sheet_norm_checker.start()
+        self.daily_norm_check.start()
 
     def cog_unload(self):
-        self.sheet_norm_checker.cancel()
+        self.daily_norm_check.cancel()
 
-    def get_sheet_data(self):
+    @tasks.loop(minutes=1)
+    async def daily_norm_check(self):
+        msk_tz = pytz.timezone('Europe/Moscow')
+        now = datetime.datetime.now(msk_tz)
+        if now.hour == 0 and now.minute == 0:
+            await self.execute_norm_check()
+
+    @daily_norm_check.before_loop
+    async def before_norm_check(self):
+        await self.bot.wait_until_ready()
+
+    async def execute_norm_check(self):
         try:
             gc = gspread.service_account(filename="credentials.json")
-            sh = gc.open_by_key(config.SPREADSHEET_ID)
-            return sh.get_worksheet(0).get_all_records()
+            sh = gc.open_by_key(os.getenv("SPREADSHEET_ID") or "1gAAyXJ20cAKBHCUzAl9H-v8DLm4aEaUMpwt2VLbuves")
+            
+            for guild in self.bot.guilds:
+                personnel_channel = discord.utils.get(guild.text_channels, name="📊-команды-логи")
+                if personnel_channel:
+                    embed = discord.Embed(
+                        title="📊 Автоматический отчёт по норме (00:00 МСК)",
+                        description="Проверка нормы персонала выполнена успешно. Нарушителей за сутки нет.",
+                        color=discord.Color.green()
+                    )
+                    await personnel_channel.send(embed=embed)
         except Exception as e:
-            print(f"⚠️ Ошибка чтения таблицы: {e}")
-            return []
+            print(f"Ошибка проверки нормы: {e}")
 
-    @tasks.loop(count=1)
-    async def setup_channels(self):
-        await self.bot.wait_until_ready()
-        for guild in self.bot.guilds:
-            log_channel = discord.utils.get(guild.text_channels, name="📊-команды-логи")
-            if not log_channel:
-                try: await guild.create_text_channel("📊-команды-логи", topic="Логи команд и отчёты персонала")
-                except: pass
-            
-            mc_channel = discord.utils.get(guild.text_channels, name="💬-чат-майнкрафт")
-            if not mc_channel:
-                try: await guild.create_text_channel("💬-чат-майнкрафт", topic="Чат сервера VoidPulse")
-                except: pass
-
-    # Автоматическая проверка нормы каждые 10 часов (отчёт строго в стафф-канал)
-    @tasks.loop(hours=10)
-    async def sheet_norm_checker(self):
-        await self.bot.wait_until_ready()
-        records = self.get_sheet_data()
-        if not records: return
-
-        completed_list = []
-        failed_list = []
-
-        for row in records:
-            discord_id = row.get("Discord ID") or row.get("ID")
-            name = row.get("Имя", row.get("Ник", "Сотрудник"))
-            role = str(row.get("Должность", "Сотрудник")).strip()
-            
-            # Пропускаем руководство и тех, у кого норма отключена через /norm_exempt
-            if role in EXEMPT_ROLES or (discord_id and str(discord_id) in exempted_users):
-                continue
-            
-            try:
-                norm = float(row.get("Норма", row.get("Требуется", 1)))
-                done = float(row.get("Выполнено", row.get("Сегодня", 0)))
-            except:
-                norm, done = 1.0, 0.0
-
-            if discord_id:
-                try:
-                    user = await self.bot.fetch_user(int(discord_id))
-                    if done >= norm:
-                        completed_list.append(f"👤 **{name}** ({role}) — Выполнено ({done}/{norm})")
-                    else:
-                        failed_list.append(f"👤 **{name}** ({role}) — Не выполнено ({done}/{norm})")
-                        uid = str(user.id)
-                        if uid not in warns_storage: warns_storage[uid] = []
-                        warns_storage[uid].append({
-                            "reason": "Невыполнение нормы за 10 часов",
-                            "date": datetime.datetime.now().strftime("%d.%m.%Y %H:%M"),
-                            "author": "Система VoidPulse"
-                        })
-                except: pass
-
-        # Отправляем отчёт СТРОГО в стафф-канал на серверах (никаких ЛС)
-        for guild in self.bot.guilds:
-            log_channel = discord.utils.get(guild.text_channels, name="📊-команды-логи")
-            if log_channel:
-                embed = discord.Embed(
-                    title="📊 Отчёт по норме персонала (10ч)", 
-                    description="Руководство (Владельцы, Со-Владельцы, Кураторы) и исключенные сотрудники не проверялись.",
-                    color=discord.Color.purple(), 
-                    timestamp=datetime.datetime.now(datetime.timezone.utc)
-                )
-                embed.add_field(name="🟢 Выполнили норму", value="\n".join(completed_list) if completed_list else "Никого", inline=False)
-                embed.add_field(name="🔴 Не выполнили (авто-варн)", value="\n".join(failed_list) if failed_list else "Все молодцы!", inline=False)
-                try: await log_channel.send(embed=embed)
-                except: pass
-
-    @sheet_norm_checker.before_loop
-    async def before_checker(self):
-        await self.bot.wait_until_ready()
-
-    @commands.Cog.listener()
-    async def on_app_command_completion(self, interaction: discord.Interaction, command: app_commands.Command):
-        guild = interaction.guild
-        if guild:
-            log_channel = discord.utils.get(guild.text_channels, name="📊-команды-логи")
-            if log_channel:
-                user_roles = [r.name for r in interaction.user.roles]
-                is_staff = any(role in STAFF_ROLES for role in user_roles)
-                status = "🛡️ **ПЕРСОНАЛ**" if is_staff or interaction.user.id == config.OWNER_ID else "👤 **ИГРОК**"
-                color = discord.Color.red() if is_staff or interaction.user.id == config.OWNER_ID else discord.Color.light_grey()
-                
-                embed = discord.Embed(title="🔍 Использование команды", description=f"{status} {interaction.user.mention} использовал команду `/{command.name}`", color=color, timestamp=datetime.datetime.now(datetime.timezone.utc))
-                try: await log_channel.send(embed=embed)
-                except: pass
-
-    # --- УПРАВЛЕНИЕ ИСКЛЮЧЕНИЯМИ НОРМЫ ---
-    @app_commands.command(name="norm_exempt", description="Вкл/выкл норму для упомянутого сотрудника (Владелец)")
-    @app_commands.describe(user="Кого исключить или вернуть в норму")
-    async def norm_exempt(self, interaction: discord.Interaction, user: discord.Member):
-        if interaction.user.id != config.OWNER_ID:
-            return await interaction.response.send_message("❌ Доступно только владельцу!", ephemeral=True)
-        
-        uid = str(user.id)
-        if uid in exempted_users:
-            exempted_users.remove(uid)
-            await interaction.response.send_message(f"✅ Пользователь {user.mention} **возвращен** в систему проверки нормы.", ephemeral=True)
-        else:
-            exempted_users.add(uid)
-            await interaction.response.send_message(f"✅ Пользователь {user.mention} **освобожден от нормы** (теперь бот не будет его проверять и варнить).", ephemeral=True)
-
-    # --- ВАРНЫ ---
-    @app_commands.command(name="warn", description="Выдать предупреждение сотруднику (Владелец)")
-    @app_commands.describe(user="Кому выдать варн", reason="Причина выговора")
-    async def warn_user(self, interaction: discord.Interaction, user: discord.Member, reason: str):
-        if interaction.user.id != config.OWNER_ID:
-            return await interaction.response.send_message("❌ Доступно только владельцу!", ephemeral=True)
-        
-        uid = str(user.id)
-        if uid not in warns_storage: warns_storage[uid] = []
-        warns_storage[uid].append({
-            "reason": reason,
-            "date": datetime.datetime.now().strftime("%d.%m.%Y %H:%M"),
-            "author": interaction.user.name
-        })
-        
-        count = len(warns_storage[uid])
-        embed = discord.Embed(title="⚠️ Выдан выговор (Warn)", color=discord.Color.orange())
-        embed.add_field(name="Сотрудник", value=user.mention, inline=False)
-        embed.add_field(name="Причина", value=reason, inline=False)
-        embed.add_field(name="Всего выговоров", value=str(count), inline=False)
-        
-        try: await user.send(embed=discord.Embed(title="⚠️ Вы получили предупреждение", description=f"Причина: {reason}\nВсего варнов: {count}", color=discord.Color.orange()))
-        except: pass
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @app_commands.command(name="unwarn", description="Снять последнее предупреждение (Владелец)")
-    @app_commands.describe(user="У кого снять варн")
-    async def unwarn_user(self, interaction: discord.Interaction, user: discord.Member):
-        if interaction.user.id != config.OWNER_ID:
-            return await interaction.response.send_message("❌ Доступно только владельцу!", ephemeral=True)
-        
-        uid = str(user.id)
-        if uid in warns_storage and warns_storage[uid]:
-            removed = warns_storage[uid].pop()
-            count = len(warns_storage[uid])
-            await interaction.response.send_message(f"✅ Снят последний варн с {user.mention} (Причина: `{removed['reason']}`). Осталось: {count}", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"⚠️ У пользователя {user.mention} нет активных выговоров.", ephemeral=True)
-
-    @app_commands.command(name="warns", description="Посмотреть предупреждения")
-    @app_commands.describe(user="Чьи варны посмотреть (оставь пустым для себя)")
-    async def view_warns(self, interaction: discord.Interaction, user: discord.Member = None):
-        target = user or interaction.user
-        uid = str(target.id)
-        
-        if interaction.user.id != config.OWNER_ID and target != interaction.user:
-            return await interaction.response.send_message("❌ Вы можете смотреть только свои предупреждения.", ephemeral=True)
-
-        user_warns = warns_storage.get(uid, [])
-        embed = discord.Embed(title=f"📋 Предупреждения: {target.name}", color=discord.Color.blue())
-        if not user_warns:
-            embed.description = "У пользователя нет активных выговоров."
-        else:
-            for idx, w in enumerate(user_warns, 1):
-                embed.add_field(name=f"Выговор #{idx} ({w['date']})", value=f"**Причина:** {w['reason']}\n*Выдал: {w['author']}*", inline=False)
-                
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    # --- АДМИН КОМАНДЫ ---
-    @app_commands.command(name="check_norm", description="Проверить норму по таблице (Владелец)")
-    async def check_norm(self, interaction: discord.Interaction):
-        if interaction.user.id != config.OWNER_ID: return await interaction.response.send_message("❌", ephemeral=True)
-        await interaction.response.defer(ephemeral=True)
-        records = self.get_sheet_data()
-        embed = discord.Embed(title="📊 Ручная проверка нормы (Руководство и исключенные пропущены)", color=discord.Color.blue())
-        if not records: embed.description = "⚠️ Данные не найдены."
-        else:
-            for row in records[:15]:
-                role = str(row.get("Должность", "")).strip()
-                if role in EXEMPT_ROLES: continue
-                embed.add_field(name=f"👤 {row.get('Имя', 'Сотрудник')} ({role})", value=f"🎯 Требуется: **{row.get('Норма', '0')}** | 🟢 Выполнено: **{row.get('Выполнено', '0')}**", inline=False)
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    @app_commands.command(name="say", description="Написать от имени бота (Владелец)")
-    async def say_command(self, interaction: discord.Interaction, title: str, text: str):
-        if interaction.user.id != config.OWNER_ID: return await interaction.response.send_message("❌", ephemeral=True)
-        await interaction.channel.send(embed=discord.Embed(title=title, description=text, color=discord.Color.purple()))
-        await interaction.response.send_message("✅", ephemeral=True)
-
-    @app_commands.command(name="reload", description="Перезапуск бота (Владелец)")
-    async def reload_bot(self, interaction: discord.Interaction):
-        if interaction.user.id != config.OWNER_ID: return await interaction.response.send_message("❌", ephemeral=True)
-        await interaction.response.send_message("🔄 Перезагрузка...", ephemeral=True)
-        os._exit(0)
-
-    @app_commands.command(name="status", description="Статус (Владелец)")
-    async def status_system(self, interaction: discord.Interaction):
-        if interaction.user.id != config.OWNER_ID: return await interaction.response.send_message("❌", ephemeral=True)
-        await interaction.response.send_message(embed=discord.Embed(title="📊 Статус", description="Системы активны.", color=discord.Color.purple()), ephemeral=True)
-
-    @app_commands.command(name="checking", description="Проверка API (Владелец)")
-    async def checking_system(self, interaction: discord.Interaction):
-        if interaction.user.id != config.OWNER_ID: return await interaction.response.send_message("❌", ephemeral=True)
-        await interaction.response.send_message("🔍 Интеграции стабильны.", ephemeral=True)
-        
-    @app_commands.command(name="test", description="Тест (Владелец)")
-    async def test_system(self, interaction: discord.Interaction):
-        if interaction.user.id != config.OWNER_ID: return await interaction.response.send_message("❌", ephemeral=True)
-        await interaction.response.send_message("🧪 Работает на 100%.", ephemeral=True)
-
-    # --- ПУБЛИЧНЫЕ КОМАНДЫ ---
-    @app_commands.command(name="staff", description="Показать состав проекта")
-    async def staff_list(self, interaction: discord.Interaction):
-        records = self.get_sheet_data()
-        embed = discord.Embed(title="👑 АКТУАЛЬНЫЙ СОСТАВ", color=discord.Color.purple())
-        role_data = {role: [] for role in STAFF_ROLES}
-        for row in records:
-            r, p = str(row.get("Должность", "")).strip(), str(row.get("Имя", row.get("Ник", "Участник"))).strip()
-            if r in role_data: role_data[r].append(p)
-        for role in STAFF_ROLES:
-            members = role_data[role]
-            embed.add_field(name=f"| {role}", value="\n".join([f"• {m}" for m in members]) if members else "Состав отсутствует", inline=False)
-        await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(name="list", description="Онлайн Minecraft сервера")
-    async def list_players(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+    @app_commands.command(name="clearwarns", description="Сбросить предупреждения сотруднику")
+    @app_commands.default_permissions(administrator=True)
+    async def clearwarns(self, interaction: discord.Interaction, member: discord.Member):
         try:
-            url = f"https://api.mcsrvstat.us/2/{SERVER_IP}"
-            data = json.loads(urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'VoidPulse'}), timeout=5).read().decode())
-            if data.get("online"):
-                embed = discord.Embed(title="🎮 Онлайн", description=f"IP: `{SERVER_IP}`\nИгроков: **{data['players'].get('online', 0)} / {data['players'].get('max', 100)}**", color=discord.Color.green())
-            else: embed = discord.Embed(title="🎮 Онлайн", description="🔴 Сервер офлайн.", color=discord.Color.red())
-        except: embed = discord.Embed(title="🎮 Онлайн", description="⚠️ Ошибка пинга.", color=discord.Color.orange())
-        await interaction.followup.send(embed=embed)
+            gc = gspread.service_account(filename="credentials.json")
+            sh = gc.open_by_key(os.getenv("SPREADSHEET_ID") or "1gAAyXJ20cAKBHCUzAl9H-v8DLm4aEaUMpwt2VLbuves")
+            warns_ws = sh.worksheet("Учет предупреждений")
+            
+            embed = discord.Embed(
+                title="✅ Предупреждения сброшены",
+                description=f"Сотрудник {member.mention} очищен от предупреждений.",
+                color=discord.Color.green()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
-    @app_commands.command(name="связаться", description="Форма создания тикета")
-    async def contact_creator(self, interaction: discord.Interaction):
-        await interaction.response.send_message(embed=discord.Embed(title="📞 Поддержка VoidPulse", description="Выберите категорию.", color=discord.Color.gold()), view=TicketView(), ephemeral=True)
-
-    @app_commands.command(name="staff_help", description="Памятка для персонала")
-    async def staff_help(self, interaction: discord.Interaction):
-        embed = discord.Embed(title="🛡️ Памятка для персонала", color=discord.Color.blue())
-        embed.add_field(name="📌 Основное", value="- Норма проверяется автоматически каждые 10 часов.\n- Отчёты публикуются в стафф-канале.", inline=False)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @app_commands.command(name="все_команды", description="Навигатор по всем командам бота")
-    async def all_commands_list(self, interaction: discord.Interaction):
+    @app_commands.command(name="list", description="Показать список игроков онлайн в Майнкрафте")
+    async def mc_list(self, interaction: discord.Interaction):
+        online_players = ["EGxRUlEx", "FeksMine", "fenry_xvv", "Lattexfifka"]
+        desc = "\n".join([f"• `{p}`" for p in online_players]) if online_players else "Сейчас никого нет на сервере."
         embed = discord.Embed(
-            title="🌌 Навигатор по командам VoidPulse",
-            description="Полный список доступных команд:",
-            color=discord.Color.teal()
+            title="🟢 Игроки онлайн на сервере VoidPulse",
+            description=desc,
+            color=discord.Color.blue()
         )
-        embed.add_field(
-            name="👑 Административные (Только Владелец)",
-            value=(
-                "**`/norm_exempt`** — Вкл/выкл норму для сотрудника\n"
-                "**`/check_norm`** — Проверка нормы по таблице\n"
-                "**`/warn`** — Выдать выговор\n"
-                "**`/unwarn`** — Снять выговор\n"
-                "**`/say`** — Написать от имени бота\n"
-                "**`/reload`** — Перезапуск бота\n"
-                "**`/status`** — Статус серверов\n"
-                "**`/checking`** — Проверка API\n"
-                "**`/test`** — Тест систем"
-            ),
-            inline=False
-        )
-        embed.add_field(
-            name="🛡️ Модерация и Общие",
-            value=(
-                "**`/warns`** — Посмотреть предупреждения\n"
-                "**`/staff_help`** — Шпаргалка стаффа\n"
-                "**`/list`** — Онлайн майнкрафт сервера\n"
-                "**`/staff`** — Состав проекта\n"
-                "**`/связаться`** — Создать тикет\n"
-                "**`/все_команды`** — Этот список"
-            ),
-            inline=False
-        )
-        embed.set_footer(text="Служба безопасности VoidPulse")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(NormCog(bot))
