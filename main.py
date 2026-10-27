@@ -29,7 +29,7 @@ async def on_ready():
         os.remove("restart_queue.txt")
         try:
             owner = await bot.fetch_user(config.OWNER_ID)
-            embed = discord.Embed(title="🔄 Перезапуск", description="✅ Бот успешно запущен без веб-панели!", color=discord.Color.green())
+            embed = discord.Embed(title="🔄 Перезапуск", description="✅ Бот успешно запущен в чистом режиме!", color=discord.Color.green())
             await owner.send(embed=embed)
         except:
             pass
