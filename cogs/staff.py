@@ -47,6 +47,9 @@ class StaffCog(commands.Cog):
                 "━━━━━━━━━━━━━━━━━━━"
             ]
 
+            ws = await asyncio.to_thread(self.get_lists_sheet)
+            rows = await asyncio.to_thread(ws.get_all_values)
+
             for guild in self.bot.guilds:
                 for member in guild.members:
                     if member.id in self.hidden_users:
@@ -54,8 +57,16 @@ class StaffCog(commands.Cog):
                         
                     is_staff = any(any(kw in r.name.lower() for kw in STAFF_ROLES_KEYWORDS) for r in member.roles)
                     if is_staff:
+                        # Ищем часы в таблице (колонка F)
+                        played_hours = "0"
+                        for row in rows[1:]:
+                            if len(row) >= 1 and row[0].strip().lower() == member.display_name.lower():
+                                if len(row) > 5 and row[5].strip():
+                                    played_hours = row[5].strip()
+                                break
+
                         status = "🟢 Освобожден" if member.id in self.exempted_users else "🟡 В процессе"
-                        line = f"• **{member.display_name}** ({member.mention})\n  └ Статус: {status} | Норма учтена"
+                        line = f"• **{member.display_name}** ({member.mention})\n  └ Статус: {status} | Отыграно: {played_hours} ч."
                         report_lines.append(line)
 
             report_lines.append("━━━━━━━━━━━━━━━━━━━")
@@ -72,37 +83,31 @@ class StaffCog(commands.Cog):
         except Exception as e:
             print(f"Ошибка проверки нормы: {e}")
 
-    @app_commands.command(name="camouflage", description="Включить/выключить режим камуфляжа (скрыть себя из списков)")
+    @app_commands.command(name="camouflage", description="Включить/выключить режим камуфляжа")
     async def camouflage(self, interaction: discord.Interaction):
         user_id = interaction.user.id
         if user_id in self.hidden_users:
             self.hidden_users.remove(user_id)
-            status_text = "🔴 **Выключен** (Вы снова отображаетесь в списках)"
-            color = discord.Color.green()
+            status_text = "🔴 **Выключен**"
         else:
             self.hidden_users.add(user_id)
-            status_text = "🟢 **Включен** (Вы скрыты из списков и кажетесь оффлайн)"
-            color = discord.Color.dark_gray()
+            status_text = "🟢 **Включен** (скрыт из списков)"
 
-        embed = discord.Embed(title="👤 Режим камуфляжа", description=f"Статус маскировки: {status_text}", color=color)
+        embed = discord.Embed(title="👤 Режим камуфляжа", description=f"Статус маскировки: {status_text}", color=discord.Color.dark_gray())
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="test", description="Отправить тексты логов и сводку в ЛС")
+    @app_commands.command(name="test", description="Тест системы")
     async def test_command(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         try:
-            embed = discord.Embed(
-                title="🧪 Тестовая выгрузка текстов и логов",
-                description="Все модули (`staff.py`, `moderation.py`, `camouflage-bot.py`) работают стабильно.",
-                color=discord.Color.blurple(),
-                timestamp=datetime.datetime.now()
-            )
+            embed = discord.Embed(title="🧪 Тест VoidPulse", description="Синхронизация с таблицей работает.", color=discord.Color.blurple())
             await interaction.user.send(embed=embed)
-            await interaction.followup.send("✅ Сводка успешно отправлена вам в личные сообщения (ЛС).", ephemeral=True)
+            await interaction.followup.send("✅ Отправлено в ЛС.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ Ошибка отправки в ЛС (проверьте настройки личных сообщений): {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Ошибка ЛС: {e}", ephemeral=True)
 
-    @app_commands.command(name="norm", description="Посмотреть статус своей нормы")
+    # КОМАНДА /NORM: БЕРЕТ ДАННЫЕ ИЗ ТАБЛИЦЫ (КОЛОНКА F)
+    @app_commands.command(name="norm", description="Посмотреть статус своей нормы из таблицы")
     async def norm(self, interaction: discord.Interaction, member: discord.Member = None):
         target = member or interaction.user
         member_roles = [r.name.lower() for r in target.roles]
@@ -111,17 +116,31 @@ class StaffCog(commands.Cog):
             embed = discord.Embed(title="🛡️ Статус: Тех. администратор", description="Норма не требуется.", color=discord.Color.dark_theme())
             return await interaction.response.send_message(embed=embed)
 
+        # Читаем часы из Google Таблицы (колонка F)
+        played_hours = "0"
+        try:
+            ws = await asyncio.to_thread(self.get_lists_sheet)
+            rows = await asyncio.to_thread(ws.get_all_values)
+            for row in rows[1:]:
+                if len(row) >= 1 and row[0].strip().lower() == target.display_name.lower():
+                    if len(row) > 5 and row[5].strip():
+                        played_hours = row[5].strip()
+                    break
+        except Exception as e:
+            print(f"Ошибка чтения таблицы для /norm: {e}")
+
         is_exempt = target.id in self.exempted_users
+        
         embed = discord.Embed(
             title="📊 Статус суточной нормы",
             color=discord.Color.green() if is_exempt else discord.Color.blue(),
             timestamp=datetime.datetime.now()
         )
         embed.set_thumbnail(url=target.display_avatar.url)
-        embed.add_field(name="Сотрудник", value=target.mention, inline=False)
+        embed.add_field(name="Сотрудник", value=f"{target.mention} (`{target.display_name}`)", inline=False)
         embed.add_field(name="Текущий статус", value="🟢 Освобожден" if is_exempt else "🟡 В процессе выполнения", inline=False)
-        embed.add_field(name="Отыграно на сервере", value="`0ч . 00м` / `1ч . 00м`", inline=False)
-        embed.add_field(name="За всё время", value="`11ч . 46м`", inline=False)
+        embed.add_field(name="Отыграно на сервере", value=f"`{played_hours} ч.` / `1 ч.`", inline=False)
+        embed.add_field(name="За всё время (Таблица)", value=f"`{played_hours} ч.`", inline=False)
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="norm_exempt", description="Освободить сотрудника от нормы")
@@ -174,8 +193,7 @@ class StaffCog(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
-    # ИСПРАВЛЕННЫЙ UNSTAFF: ТОЧНО СНИМАЕТ ВСЕ РОЛИ С КЛЮЧЕВЫМИ СЛОВАМИ И КИКАЕТ ИЗ КАНАЛА ПЕРСОНАЛА
-    @app_commands.command(name="unstaff", description="Снять сотрудника (снимает ВСЕ стафф-роли и закрывает доступ)")
+    @app_commands.command(name="unstaff", description="Снять сотрудника")
     @app_commands.default_permissions(administrator=True)
     async def unstaff_member(self, interaction: discord.Interaction, member: discord.Member, reason: str = "По решению руководства"):
         if member.id == interaction.user.id:
@@ -183,17 +201,14 @@ class StaffCog(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
         try:
-            # Снимаем любые роли, в названии которых есть ключевые слова персонала
             roles_to_remove = [r for r in member.roles if any(kw in r.name.lower() for kw in STAFF_ROLES_KEYWORDS)]
             if roles_to_remove:
                 await member.remove_roles(*roles_to_remove)
 
-            # Закрываем доступ к каналу персонала
             ch = self.bot.get_channel(self.personnel_channel_id)
             if ch:
                 await ch.set_permissions(member, read_messages=False, send_messages=False)
 
-            # Удаляем из таблицы
             ws = await asyncio.to_thread(self.get_lists_sheet)
             rows = await asyncio.to_thread(ws.get_all_values)
             for i in range(len(rows) - 1, 0, -1):
@@ -206,7 +221,7 @@ class StaffCog(commands.Cog):
             
             if ch:
                 await ch.send(embed=embed)
-            await interaction.followup.send(f"✅ Сотрудник {member.mention} успешно снят (роли аннулированы, доступ закрыт).", ephemeral=True)
+            await interaction.followup.send(f"✅ Сотрудник {member.mention} успешно снят.", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка снятия: {e}", ephemeral=True)
 
@@ -215,7 +230,7 @@ class StaffCog(commands.Cog):
         await interaction.response.defer()
         try:
             guild = interaction.guild
-            staff_by_role = {role: [] for role in STAFF_ROLES_KEYWORDS}
+            staff_by_role = {kw: [] for kw in STAFF_ROLES_KEYWORDS}
 
             for member in guild.members:
                 if member.id in self.hidden_users:
