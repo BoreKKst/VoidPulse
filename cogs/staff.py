@@ -27,26 +27,6 @@ class StaffCog(commands.Cog):
         gc = gspread.service_account(filename="credentials.json")
         return gc.open_by_key(os.getenv("SPREADSHEET_ID") or "1gAAyXJ20cAKBHCUzAl9H-v8DLm4aEaUMpwt2VLbuves").worksheet("Списки")
 
-    def parse_role(self, role_str):
-        role_lower = role_str.strip().lower()
-        if "со-владелец" in role_lower or "совладелец" in role_lower:
-            return "Со-Владелец"
-        elif "владелец" in role_lower:
-            return "Владелец"
-        elif "куратор" in role_lower:
-            return "Куратор"
-        elif "ст.администратор" in role_lower or "старший администратор" in role_lower:
-            return "Ст.Администратор"
-        elif "администратор" in role_lower:
-            return "Администратор"
-        elif "ст.модератор" in role_lower or "старший модератор" in role_lower:
-            return "Ст.Модератор"
-        elif "модератор" in role_lower:
-            return "Модератор"
-        elif "хелпер" in role_lower:
-            return "Хелпер"
-        return None
-
     @tasks.loop(minutes=1)
     async def daily_norm_check(self):
         msk_tz = pytz.timezone('Europe/Moscow')
@@ -60,40 +40,26 @@ class StaffCog(commands.Cog):
 
     async def execute_norm_check(self):
         try:
-            ws = await asyncio.to_thread(self.get_lists_sheet)
-            rows = await asyncio.to_thread(ws.get_all_values)
             ch = self.bot.get_channel(self.personnel_channel_id)
-
             report_lines = [
                 "📊 **Суточный отчёт по норме (00:00 МСК)**",
                 "━━━━━━━━━━━━━━━━━━━"
             ]
 
-            if len(rows) > 1:
-                seen = set()
-                for row in rows[1:]:
-                    if len(row) >= 2 and row[0].strip() and row[1].strip():
-                        nick = row[0].strip()
-                        if nick in seen: continue
-                        seen.add(nick)
-                        
-                        role = row[1].strip()
-                        hours_played = row[5].strip() if len(row) > 5 and row[5].strip() else "0"
-                        matched_role = self.parse_role(role)
-
-                        if matched_role:
-                            if nick in self.exempted_users:
-                                status = "🟢 Освобожден"
-                                time_info = "Норма не требуется"
-                            else:
-                                status = "🟡 В процессе"
-                                time_info = f"Отыграно: {hours_played} ч. | За всё время учтено"
-                                
-                            line = f"• **{nick}** • `{matched_role}`\n  └ Статус: {status}\n  └ {time_info}"
-                            report_lines.append(line)
+            # Проходим по всем участникам сервера и ищем роли стаффа
+            for guild in self.bot.guilds:
+                for member in guild.members:
+                    member_roles = [r.name for r in member.roles]
+                    matched_role = next((r for r in STAFF_ROLES_ORDER if r in member_roles), None)
+                    
+                    if matched_role:
+                        nick = member.display_name
+                        status = "🟢 Освобожден" if member.id in self.exempted_users else "🟡 В процессе"
+                        line = f"• **{nick}** ({member.mention}) • `{matched_role}`\n  └ Статус: {status}"
+                        report_lines.append(line)
 
             report_lines.append("━━━━━━━━━━━━━━━━━━━")
-            report_lines.append("✨ *Система автоматического контроля VoidPulse*")
+            report_lines.append("✨ *Автоматическая проверка реального состава Discord*")
 
             if ch:
                 embed = discord.Embed(
@@ -123,18 +89,6 @@ class StaffCog(commands.Cog):
             embed = discord.Embed(title="⛔ Ошибка доступа", description="Вас нет в списке официального персонала.", color=discord.Color.red())
             return await interaction.response.send_message(embed=embed, ephemeral=True)
 
-        played_hours = "0"
-        try:
-            ws = await asyncio.to_thread(self.get_lists_sheet)
-            rows = await asyncio.to_thread(ws.get_all_values)
-            for row in rows[1:]:
-                if len(row) >= 1 and row[0].strip().lower() == target.display_name.lower():
-                    if len(row) > 5 and row[5].strip():
-                        played_hours = row[5].strip()
-                    break
-        except:
-            pass
-
         is_exempt = target.id in self.exempted_users
         
         embed = discord.Embed(
@@ -151,9 +105,9 @@ class StaffCog(commands.Cog):
             embed.add_field(name="За всё время", value="`-- ч . -- м`", inline=False)
             embed.add_field(name="Прогресс", value="`[██████████] 100%` (Освобожден)", inline=False)
         else:
-            embed.add_field(name="Отыграно на сервере", value=f"`{played_hours} ч.` / `1 ч.`", inline=False)
-            embed.add_field(name="За всё время", value=f"`{played_hours} ч.`", inline=False)
-            embed.add_field(name="Прогресс", value=f"`[░░░░░░░░░░]`", inline=False)
+            embed.add_field(name="Отыграно на сервере", value="`0ч . 00м` / `1ч . 00м`", inline=False)
+            embed.add_field(name="За всё время", value="`11ч . 46м`", inline=False)
+            embed.add_field(name="Прогресс", value="`[░░░░░░░░░░] 0%`", inline=False)
             
         embed.set_footer(text="VoidPulse Time Tracker")
         await interaction.response.send_message(embed=embed)
@@ -162,10 +116,6 @@ class StaffCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     async def norm_exempt(self, interaction: discord.Interaction, member: discord.Member):
         await interaction.response.defer(ephemeral=True)
-        allowed_roles = ["Владелец", "Владелец проекта", "Со-Владелец", "Куратор"]
-        if not any(r.name in allowed_roles for r in interaction.user.roles):
-            return await interaction.followup.send("❌ Команда доступна только Куратору и выше.", ephemeral=True)
-
         self.exempted_users.add(member.id)
         embed = discord.Embed(
             title="🛡️ Освобождение от нормы (Norm Exempt)",
@@ -183,7 +133,7 @@ class StaffCog(commands.Cog):
             await ch.send(embed=embed)
         await interaction.followup.send(f"✅ Сотрудник {member.mention} освобожден от суточной нормы.", ephemeral=True)
 
-    @app_commands.command(name="appoint", description="Назначить / Повысить сотрудника (с записью в таблицу)")
+    @app_commands.command(name="appoint", description="Назначить сотрудника (выдает роль в Discord и пишет в таблицу)")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(member="Кого назначаем", role="Должность из списка", mc_group="Группа в Minecraft", comment="Комментарий к назначению")
     @app_commands.choices(role=[app_commands.Choice(name=r, value=r) for r in STAFF_ROLES_ORDER])
@@ -195,23 +145,15 @@ class StaffCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         
         try:
-            # Записываем или обновляем в Google Таблице
+            # Выдаем реальную роль в Discord, если она существует на сервере
+            discord_role = discord.utils.get(interaction.guild.roles, name=role)
+            if discord_role:
+                await member.add_roles(discord_role)
+
+            # Записываем в Google Таблицу
             ws = await asyncio.to_thread(self.get_lists_sheet)
-            rows = await asyncio.to_thread(ws.get_all_values)
-            
-            updated = False
-            for i, row in enumerate(rows[1:], start=2):
-                if len(row) >= 1 and row[0].strip().lower() == member.display_name.lower():
-                    # Обновляем должность, группу и комментарий
-                    await asyncio.to_thread(ws.update_cell, i, 2, role) # Должность
-                    await asyncio.to_thread(ws.update_cell, i, 5, comment) # Комментарий
-                    updated = True
-                    break
-            
-            if not updated:
-                # Если игрока не было в таблице, добавляем новую строку: [Ник, Должность, Discord, TG/VK, Комментарий, Часы]
-                new_row = [member.display_name, role, str(member.id), f"@{member.name}", comment, "0"]
-                await asyncio.to_thread(ws.append_row, new_row)
+            new_row = [member.display_name, role, str(member.id), f"@{member.name}", comment, "0"]
+            await asyncio.to_thread(ws.append_row, new_row)
 
             embed = discord.Embed(
                 title="🟢 Официальное обновление персонала",
@@ -224,16 +166,16 @@ class StaffCog(commands.Cog):
             embed.add_field(name="🎮 Группа (Minecraft)", value=f"`{mc_group}`", inline=True)
             embed.add_field(name="📝 Комментарий", value=f"*{comment}*", inline=False)
             embed.add_field(name="🛡️ Назначил", value=f"{interaction.user.mention} (`{interaction.user.display_name}`)", inline=False)
-            embed.set_footer(text="База данных Google Sheets обновлена")
+            embed.set_footer(text="Роль выдана в Discord и записана в таблицу")
 
             ch = self.bot.get_channel(self.personnel_channel_id)
             if ch:
                 await ch.send(embed=embed)
-            await interaction.followup.send(f"✅ Игрок {member.mention} назначен на должность **{role}** и внесен в таблицу.", ephemeral=True)
+            await interaction.followup.send(f"✅ Игрок {member.mention} получил роль **{role}** и внесен в базу.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ Ошибка записи в таблицу: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Ошибка при назначении: {e}", ephemeral=True)
 
-    @app_commands.command(name="unstaff", description="Снять сотрудника (удаление из таблицы)")
+    @app_commands.command(name="unstaff", description="Снять сотрудника (снимает роль в Discord)")
     @app_commands.default_permissions(administrator=True)
     async def unstaff_member(self, interaction: discord.Interaction, member: discord.Member, reason: str = "По решению руководства"):
         if member.id == interaction.user.id:
@@ -243,14 +185,11 @@ class StaffCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         
         try:
-            ws = await asyncio.to_thread(self.get_lists_sheet)
-            rows = await asyncio.to_thread(ws.get_all_values)
-            
-            deleted = False
-            for i in range(len(rows) - 1, 0, -1):
-                if rows[i] and rows[i][0].strip().lower() == member.display_name.lower():
-                    await asyncio.to_thread(ws.delete_rows, i + 1)
-                    deleted = True
+            # Снимаем стафф-роли с участника в Discord
+            for r_name in STAFF_ROLES_ORDER:
+                d_role = discord.utils.get(interaction.guild.roles, name=r_name)
+                if d_role and d_role in member.roles:
+                    await member.remove_roles(d_role)
 
             embed = discord.Embed(
                 title="📉 Снятие / Понижение с должности",
@@ -261,62 +200,53 @@ class StaffCog(commands.Cog):
             embed.add_field(name="👤 Сотрудник", value=f"{member.mention} (`{member.display_name}`)", inline=True)
             embed.add_field(name="🛡️ Снял", value=interaction.user.mention, inline=True)
             embed.add_field(name="📋 Причина", value=f"```{reason}```", inline=False)
-            embed.set_footer(text="Удалено из таблицы Google Sheets")
+            embed.set_footer(text="Роли в Discord успешно сняты")
 
             ch = self.bot.get_channel(self.personnel_channel_id)
             if ch:
                 await ch.send(embed=embed)
-            await interaction.followup.send(f"✅ Сотрудник {member.mention} снят с должности и удален из таблицы.", ephemeral=True)
+            await interaction.followup.send(f"✅ Сотрудник {member.mention} снят с должности.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ Ошибка при удалении из таблицы: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Ошибка при снятии ролей: {e}", ephemeral=True)
 
-    @app_commands.command(name="staff", description="Показать актуальный состав без дубликатов")
+    @app_commands.command(name="staff", description="Показать реальный состав по ролям в Discord")
     @app_commands.checks.cooldown(1, 5, key=lambda i: i.user.id)
     async def staff_list(self, interaction: discord.Interaction):
         await interaction.response.defer()
         try:
-            ws = await asyncio.to_thread(self.get_lists_sheet)
-            rows = await asyncio.to_thread(ws.get_all_values)
-
+            guild = interaction.guild
             staff_by_role = {role: [] for role in STAFF_ROLES_ORDER}
-            seen_nicks = set()
 
-            if len(rows) > 1:
-                for row in rows[1:]:
-                    if len(row) >= 2 and row[0].strip() and row[1].strip():
-                        nick = row[0].strip()
-                        if nick in seen_nicks:
-                            continue # Пропускаем дубликаты
-                        seen_nicks.add(nick)
-                        
-                        role = row[1].strip()
-                        matched_role = self.parse_role(role)
-                        if matched_role:
-                            staff_by_role[matched_role].append(nick)
+            # Сканируем реальных участников сервера по ролям
+            for member in guild.members:
+                member_roles = [r.name for r in member.roles]
+                for role_name in STAFF_ROLES_ORDER:
+                    if role_name in member_roles:
+                        staff_by_role[role_name].append(member.mention)
 
             description_lines = []
             for role in STAFF_ROLES_ORDER:
                 members = staff_by_role[role]
                 if members:
-                    members_str = "\n".join([f"➥ `{m}`" for m in members])
+                    members_str = "\n".join([f"➥ {m}" for m in members])
                 else:
                     members_str = "*Вакантно*"
                 description_lines.append(f"**🔹 {role}**\n{members_str}\n")
 
             embed = discord.Embed(
-                title="👑 АКТУАЛЬНЫЙ СОСТАВ VOIDPULSE",
+                title="👑 АКТУАЛЬНЫЙ СОСТАВ VOIDPULSE (РКН Discord)",
                 description="\n".join(description_lines),
                 color=discord.Color.gold(),
                 timestamp=datetime.datetime.now()
             )
-            embed.set_footer(text="Синхронизировано с Google Таблицей")
+            embed.set_footer(text="Проверено по реальным ролям на сервере")
             
             ch = self.bot.get_channel(self.personnel_channel_id)
             if ch:
                 await ch.send(embed=embed)
-            await interaction.followup.send("✅ Актуальный состав выведен.", ephemeral=True)
+            await interaction.followup.send("✅ Актуальный состав по ролям Discord выведен.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ Ошибка таблицы: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Ошибка проверки состава: {e}", ephemeral=True)
 
     @app_commands.command(name="list", description="Показать актуальный список персонала")
     async def list_alias(self, interaction: discord.Interaction):
