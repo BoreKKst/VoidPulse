@@ -70,9 +70,13 @@ class StaffCog(commands.Cog):
             ]
 
             if len(rows) > 1:
+                seen = set()
                 for row in rows[1:]:
                     if len(row) >= 2 and row[0].strip() and row[1].strip():
                         nick = row[0].strip()
+                        if nick in seen: continue
+                        seen.add(nick)
+                        
                         role = row[1].strip()
                         hours_played = row[5].strip() if len(row) > 5 and row[5].strip() else "0"
                         matched_role = self.parse_role(role)
@@ -119,7 +123,6 @@ class StaffCog(commands.Cog):
             embed = discord.Embed(title="⛔ Ошибка доступа", description="Вас нет в списке официального персонала.", color=discord.Color.red())
             return await interaction.response.send_message(embed=embed, ephemeral=True)
 
-        # Вытягиваем данные часов из таблицы для участника
         played_hours = "0"
         try:
             ws = await asyncio.to_thread(self.get_lists_sheet)
@@ -180,7 +183,7 @@ class StaffCog(commands.Cog):
             await ch.send(embed=embed)
         await interaction.followup.send(f"✅ Сотрудник {member.mention} освобожден от суточной нормы.", ephemeral=True)
 
-    @app_commands.command(name="appoint", description="Назначить / Повысить сотрудника")
+    @app_commands.command(name="appoint", description="Назначить / Повысить сотрудника (с записью в таблицу)")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(member="Кого назначаем", role="Должность из списка", mc_group="Группа в Minecraft", comment="Комментарий к назначению")
     @app_commands.choices(role=[app_commands.Choice(name=r, value=r) for r in STAFF_ROLES_ORDER])
@@ -190,25 +193,47 @@ class StaffCog(commands.Cog):
             return await interaction.response.send_message(embed=embed, ephemeral=True)
 
         await interaction.response.defer(ephemeral=True)
-        embed = discord.Embed(
-            title="🟢 Официальное обновление персонала",
-            color=discord.Color.brand_green(),
-            timestamp=datetime.datetime.now()
-        )
-        embed.set_thumbnail(url=member.display_avatar.url)
-        embed.add_field(name="👤 Игрок", value=f"`{member.display_name}`\n{member.mention}", inline=True)
-        embed.add_field(name="💼 Должность", value=f"**{role}**", inline=True)
-        embed.add_field(name="🎮 Группа (Minecraft)", value=f"`{mc_group}`", inline=True)
-        embed.add_field(name="📝 Комментарий", value=f"*{comment}*", inline=False)
-        embed.add_field(name="🛡️ Назначил", value=f"{interaction.user.mention} (`{interaction.user.display_name}`)", inline=False)
-        embed.set_footer(text="VoidPulse Staff Management")
+        
+        try:
+            # Записываем или обновляем в Google Таблице
+            ws = await asyncio.to_thread(self.get_lists_sheet)
+            rows = await asyncio.to_thread(ws.get_all_values)
+            
+            updated = False
+            for i, row in enumerate(rows[1:], start=2):
+                if len(row) >= 1 and row[0].strip().lower() == member.display_name.lower():
+                    # Обновляем должность, группу и комментарий
+                    await asyncio.to_thread(ws.update_cell, i, 2, role) # Должность
+                    await asyncio.to_thread(ws.update_cell, i, 5, comment) # Комментарий
+                    updated = True
+                    break
+            
+            if not updated:
+                # Если игрока не было в таблице, добавляем новую строку: [Ник, Должность, Discord, TG/VK, Комментарий, Часы]
+                new_row = [member.display_name, role, str(member.id), f"@{member.name}", comment, "0"]
+                await asyncio.to_thread(ws.append_row, new_row)
 
-        ch = self.bot.get_channel(self.personnel_channel_id)
-        if ch:
-            await ch.send(embed=embed)
-        await interaction.followup.send(f"✅ Игрок {member.mention} успешно назначен на должность **{role}**.", ephemeral=True)
+            embed = discord.Embed(
+                title="🟢 Официальное обновление персонала",
+                color=discord.Color.brand_green(),
+                timestamp=datetime.datetime.now()
+            )
+            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.add_field(name="👤 Игрок", value=f"`{member.display_name}`\n{member.mention}", inline=True)
+            embed.add_field(name="💼 Должность", value=f"**{role}**", inline=True)
+            embed.add_field(name="🎮 Группа (Minecraft)", value=f"`{mc_group}`", inline=True)
+            embed.add_field(name="📝 Комментарий", value=f"*{comment}*", inline=False)
+            embed.add_field(name="🛡️ Назначил", value=f"{interaction.user.mention} (`{interaction.user.display_name}`)", inline=False)
+            embed.set_footer(text="База данных Google Sheets обновлена")
 
-    @app_commands.command(name="unstaff", description="Снять / Понизить сотрудника")
+            ch = self.bot.get_channel(self.personnel_channel_id)
+            if ch:
+                await ch.send(embed=embed)
+            await interaction.followup.send(f"✅ Игрок {member.mention} назначен на должность **{role}** и внесен в таблицу.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка записи в таблицу: {e}", ephemeral=True)
+
+    @app_commands.command(name="unstaff", description="Снять сотрудника (удаление из таблицы)")
     @app_commands.default_permissions(administrator=True)
     async def unstaff_member(self, interaction: discord.Interaction, member: discord.Member, reason: str = "По решению руководства"):
         if member.id == interaction.user.id:
@@ -216,23 +241,36 @@ class StaffCog(commands.Cog):
             return await interaction.response.send_message(embed=embed, ephemeral=True)
 
         await interaction.response.defer(ephemeral=True)
-        embed = discord.Embed(
-            title="📉 Снятие / Понижение с должности",
-            color=discord.Color.red(),
-            timestamp=datetime.datetime.now()
-        )
-        embed.set_thumbnail(url=member.display_avatar.url)
-        embed.add_field(name="👤 Сотрудник", value=f"{member.mention} (`{member.display_name}`)", inline=True)
-        embed.add_field(name="🛡️ Снял", value=interaction.user.mention, inline=True)
-        embed.add_field(name="📋 Причина", value=f"```{reason}```", inline=False)
-        embed.set_footer(text="VoidPulse Staff Management")
+        
+        try:
+            ws = await asyncio.to_thread(self.get_lists_sheet)
+            rows = await asyncio.to_thread(ws.get_all_values)
+            
+            deleted = False
+            for i in range(len(rows) - 1, 0, -1):
+                if rows[i] and rows[i][0].strip().lower() == member.display_name.lower():
+                    await asyncio.to_thread(ws.delete_rows, i + 1)
+                    deleted = True
 
-        ch = self.bot.get_channel(self.personnel_channel_id)
-        if ch:
-            await ch.send(embed=embed)
-        await interaction.followup.send(f"✅ Снятие успешно зафиксировано.", ephemeral=True)
+            embed = discord.Embed(
+                title="📉 Снятие / Понижение с должности",
+                color=discord.Color.red(),
+                timestamp=datetime.datetime.now()
+            )
+            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.add_field(name="👤 Сотрудник", value=f"{member.mention} (`{member.display_name}`)", inline=True)
+            embed.add_field(name="🛡️ Снял", value=interaction.user.mention, inline=True)
+            embed.add_field(name="📋 Причина", value=f"```{reason}```", inline=False)
+            embed.set_footer(text="Удалено из таблицы Google Sheets")
 
-    @app_commands.command(name="staff", description="Показать актуальную иерархию состава")
+            ch = self.bot.get_channel(self.personnel_channel_id)
+            if ch:
+                await ch.send(embed=embed)
+            await interaction.followup.send(f"✅ Сотрудник {member.mention} снят с должности и удален из таблицы.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка при удалении из таблицы: {e}", ephemeral=True)
+
+    @app_commands.command(name="staff", description="Показать актуальный состав без дубликатов")
     @app_commands.checks.cooldown(1, 5, key=lambda i: i.user.id)
     async def staff_list(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -241,11 +279,16 @@ class StaffCog(commands.Cog):
             rows = await asyncio.to_thread(ws.get_all_values)
 
             staff_by_role = {role: [] for role in STAFF_ROLES_ORDER}
+            seen_nicks = set()
 
             if len(rows) > 1:
                 for row in rows[1:]:
                     if len(row) >= 2 and row[0].strip() and row[1].strip():
                         nick = row[0].strip()
+                        if nick in seen_nicks:
+                            continue # Пропускаем дубликаты
+                        seen_nicks.add(nick)
+                        
                         role = row[1].strip()
                         matched_role = self.parse_role(role)
                         if matched_role:
@@ -266,7 +309,7 @@ class StaffCog(commands.Cog):
                 color=discord.Color.gold(),
                 timestamp=datetime.datetime.now()
             )
-            embed.set_footer(text="Официальный список персонала")
+            embed.set_footer(text="Синхронизировано с Google Таблицей")
             
             ch = self.bot.get_channel(self.personnel_channel_id)
             if ch:
@@ -275,7 +318,6 @@ class StaffCog(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка таблицы: {e}", ephemeral=True)
 
-    # Возвращаем команду /list как алиас для /staff для полного удобства
     @app_commands.command(name="list", description="Показать актуальный список персонала")
     async def list_alias(self, interaction: discord.Interaction):
         await self.staff_list.callback(self, interaction)
