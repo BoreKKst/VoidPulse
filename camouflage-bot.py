@@ -26,15 +26,17 @@ async def sync_status_with_brother():
         for guild in bot.guilds:
             owner = guild.get_member(OWNER_ID)
             if owner:
+                # Если ты оффлайн или невидимый — бот тоже невидимка
                 if owner.status in [discord.Status.offline, discord.Status.invisible]:
                     await bot.change_presence(status=discord.Status.invisible, activity=None)
                 else:
-                    activity = discord.Game(name="VoidPulse Security | С братом в сети 🟢")
+                    # Если ты в сети, активен или не беспокоить — бот зеленый и "играет в VoidPulse"
+                    activity = discord.Game(name="VoidPulse")
                     await bot.change_presence(status=discord.Status.online, activity=activity)
-        await asyncio.sleep(10)
+        await asyncio.sleep(5) # Проверка каждые 5 секунд для мгновенной реакции
 
 if __name__ == "__main__":
     if TOKEN:
         bot.run(TOKEN)
     else:
-        print("❌ Ошибка: Токен не найден! Проверьте переменную окружения TOKEN.")
+        print("❌ Ошибка: Токен не найден!")
