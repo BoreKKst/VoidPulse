@@ -74,6 +74,7 @@ class StaffCog(commands.Cog):
                     if len(row) >= 2 and row[0].strip() and row[1].strip():
                         nick = row[0].strip()
                         role = row[1].strip()
+                        hours_played = row[5].strip() if len(row) > 5 and row[5].strip() else "0"
                         matched_role = self.parse_role(role)
 
                         if matched_role:
@@ -82,7 +83,7 @@ class StaffCog(commands.Cog):
                                 time_info = "Норма не требуется"
                             else:
                                 status = "🟡 В процессе"
-                                time_info = "Отыграно: 0ч . 00м / 1ч . 00м\n  └ За всё время: 11ч . 46м"
+                                time_info = f"Отыграно: {hours_played} ч. | За всё время учтено"
                                 
                             line = f"• **{nick}** • `{matched_role}`\n  └ Статус: {status}\n  └ {time_info}"
                             report_lines.append(line)
@@ -118,6 +119,19 @@ class StaffCog(commands.Cog):
             embed = discord.Embed(title="⛔ Ошибка доступа", description="Вас нет в списке официального персонала.", color=discord.Color.red())
             return await interaction.response.send_message(embed=embed, ephemeral=True)
 
+        # Вытягиваем данные часов из таблицы для участника
+        played_hours = "0"
+        try:
+            ws = await asyncio.to_thread(self.get_lists_sheet)
+            rows = await asyncio.to_thread(ws.get_all_values)
+            for row in rows[1:]:
+                if len(row) >= 1 and row[0].strip().lower() == target.display_name.lower():
+                    if len(row) > 5 and row[5].strip():
+                        played_hours = row[5].strip()
+                    break
+        except:
+            pass
+
         is_exempt = target.id in self.exempted_users
         
         embed = discord.Embed(
@@ -134,9 +148,9 @@ class StaffCog(commands.Cog):
             embed.add_field(name="За всё время", value="`-- ч . -- м`", inline=False)
             embed.add_field(name="Прогресс", value="`[██████████] 100%` (Освобожден)", inline=False)
         else:
-            embed.add_field(name="Отыграно на сервере", value="`0ч . 00м` / `1ч . 00м`", inline=False)
-            embed.add_field(name="За всё время", value="`11ч . 46м`", inline=False)
-            embed.add_field(name="Прогресс", value="`[░░░░░░░░░░] 0%`", inline=False)
+            embed.add_field(name="Отыграно на сервере", value=f"`{played_hours} ч.` / `1 ч.`", inline=False)
+            embed.add_field(name="За всё время", value=f"`{played_hours} ч.`", inline=False)
+            embed.add_field(name="Прогресс", value=f"`[░░░░░░░░░░]`", inline=False)
             
         embed.set_footer(text="VoidPulse Time Tracker")
         await interaction.response.send_message(embed=embed)
@@ -219,6 +233,7 @@ class StaffCog(commands.Cog):
         await interaction.followup.send(f"✅ Снятие успешно зафиксировано.", ephemeral=True)
 
     @app_commands.command(name="staff", description="Показать актуальную иерархию состава")
+    @app_commands.checks.cooldown(1, 5, key=lambda i: i.user.id)
     async def staff_list(self, interaction: discord.Interaction):
         await interaction.response.defer()
         try:
@@ -259,6 +274,11 @@ class StaffCog(commands.Cog):
             await interaction.followup.send("✅ Актуальный состав выведен.", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка таблицы: {e}", ephemeral=True)
+
+    # Возвращаем команду /list как алиас для /staff для полного удобства
+    @app_commands.command(name="list", description="Показать актуальный список персонала")
+    async def list_alias(self, interaction: discord.Interaction):
+        await self.staff_list.callback(self, interaction)
 
     @app_commands.command(name="check_norm", description="Принудительная проверка нормы состава")
     @app_commands.default_permissions(administrator=True)
