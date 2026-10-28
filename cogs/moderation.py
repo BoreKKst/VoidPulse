@@ -18,32 +18,41 @@ class ModerationCog(commands.Cog):
     @app_commands.command(name="warn", description="Выдать выговор сотруднику с записью в таблицу")
     @app_commands.default_permissions(administrator=True)
     async def warn_member(self, interaction: discord.Interaction, member: discord.Member, reason: str):
+        if member.id == interaction.user.id:
+            embed = discord.Embed(title="⛔ Системная ошибка", description="Действие отклонено: Вы не можете выдать выговор самому себе.", color=discord.Color.red())
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
+
         await interaction.response.defer(ephemeral=True)
         try:
             ws = await asyncio.to_thread(self.get_sheet)
             date_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
             await asyncio.to_thread(ws.append_row, [member.display_name, date_str, reason, interaction.user.display_name])
-            
+
             embed = discord.Embed(
-                title="⚠️ Выдан выговор (Warn)",
-                description=f"**Сотрудник:** {member.mention}\n**Причина:** {reason}\n**Выдал:** {interaction.user.mention}",
+                title="⚠️ Выдан официальный выговор",
                 color=discord.Color.orange(),
                 timestamp=datetime.datetime.now()
             )
+            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.add_field(name="👤 Сотрудник", value=f"{member.mention} (`{member.display_name}`)", inline=False)
+            embed.add_field(name="📋 Причина", value=f"```{reason}```", inline=False)
+            embed.add_field(name="🛡️ Выдал", value=interaction.user.mention, inline=False)
+            embed.set_footer(text="VoidPulse Moderation Log")
+
             ch = self.bot.get_channel(self.violations_channel_id)
             if ch:
                 await ch.send(embed=embed)
-            await interaction.followup.send("✅ Варн выдан и занесен в лог нарушений.", ephemeral=True)
+            await interaction.followup.send(f"✅ Выговор для {member.mention} зафиксирован в базе.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Ошибка подключения к базе данных: {e}", ephemeral=True)
 
-    @app_commands.command(name="unwarn", description="Снять последнее предупреждение")
+    @app_commands.command(name="unwarn", description="Снять последнее предупреждение (Куратор+)")
     @app_commands.default_permissions(administrator=True)
     async def unwarn_member(self, interaction: discord.Interaction, member: discord.Member):
         await interaction.response.defer(ephemeral=True)
-        restricted = ["Хелпер", "Модератор"]
-        if any(r.name in restricted for r in interaction.user.roles):
-            return await interaction.followup.send("❌ У вас нет прав для снятия варнов.", ephemeral=True)
+        restricted_roles = ["Хелпер", "Модератор", "Ст.Модератор"]
+        if any(r.name in restricted_roles for r in interaction.user.roles):
+            return await interaction.followup.send("❌ Доступ запрещен. У вас недостаточно прав для снятия выговоров.", ephemeral=True)
 
         try:
             ws = await asyncio.to_thread(self.get_sheet)
@@ -51,19 +60,24 @@ class ModerationCog(commands.Cog):
             for i in range(len(rows) - 1, 0, -1):
                 if rows[i] and member.display_name.lower() in rows[i][0].lower():
                     await asyncio.to_thread(ws.delete_rows, i + 1)
+                    
                     embed = discord.Embed(
-                        title="🛡️ Снятие выговора (Unwarn)",
-                        description=f"**Сотрудник:** {member.mention}\n**Снял:** {interaction.user.mention}",
+                        title="🛡️ Снятие выговора (Амнистия)",
                         color=discord.Color.green(),
                         timestamp=datetime.datetime.now()
                     )
+                    embed.add_field(name="👤 Сотрудник", value=member.mention, inline=True)
+                    embed.add_field(name="🛡️ Снял", value=interaction.user.mention, inline=True)
+                    embed.set_footer(text="VoidPulse Moderation Log")
+
                     ch = self.bot.get_channel(self.violations_channel_id)
                     if ch:
                         await ch.send(embed=embed)
-                    return await interaction.followup.send(f"✅ Последний варн {member.mention} удален.", ephemeral=True)
-            await interaction.followup.send("⚠️ Активных варнов в таблице не найдено.", ephemeral=True)
+                    return await interaction.followup.send(f"✅ Последний активный выговор {member.mention} успешно удален.", ephemeral=True)
+                    
+            await interaction.followup.send("⚠️ Активных предупреждений в базе не найдено.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Ошибка базы данных: {e}", ephemeral=True)
 
     @app_commands.command(name="warns", description="Просмотреть активные выговоры сотрудника")
     async def warns(self, interaction: discord.Interaction, member: discord.Member = None):
@@ -73,17 +87,23 @@ class ModerationCog(commands.Cog):
             ws = await asyncio.to_thread(self.get_sheet)
             rows = await asyncio.to_thread(ws.get_all_values)
             records = [r for r in rows[1:] if r and target.display_name.lower() in r[0].lower()]
-            desc = "\n".join([f"`{r[1]}` | {r[2]} *(Выдал: {r[3]})*" for r in records]) if records else "Нарушений не зафиксировано."
+            
+            desc = "\n\n".join([f"🕒 `{r[1]}`\n📝 Причина: **{r[2]}**\n🛡️ Выдал: `{r[3]}`" for r in records]) if records else "✅ Нарушений не зафиксировано."
+            
             embed = discord.Embed(
-                title=f"📋 Список нарушений — {target.display_name}",
+                title=f"📋 Личное дело — {target.display_name}",
                 description=desc,
-                color=discord.Color.red() if records else discord.Color.green()
+                color=discord.Color.red() if records else discord.Color.green(),
+                timestamp=datetime.datetime.now()
             )
+            embed.set_thumbnail(url=target.display_avatar.url)
+            embed.set_footer(text=f"Всего выговоров: {len(records)}")
+            
             await interaction.followup.send(embed=embed)
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка чтения данных: {e}", ephemeral=True)
 
-    @app_commands.command(name="clearwarns", description="Очистить все предупреждения пользователя")
+    @app_commands.command(name="clearwarns", description="Очистить абсолютно все предупреждения пользователя")
     @app_commands.default_permissions(administrator=True)
     async def clearwarns(self, interaction: discord.Interaction, member: discord.Member):
         await interaction.response.defer(ephemeral=True)
@@ -95,35 +115,56 @@ class ModerationCog(commands.Cog):
                 if rows[i] and member.display_name.lower() in rows[i][0].lower():
                     await asyncio.to_thread(ws.delete_rows, i + 1)
                     deleted += 1
+                    
             embed = discord.Embed(
-                title="🧹 Полная очистка выговоров",
-                description=f"**Сотрудник:** {member.mention}\n**Очищено записей:** {deleted}\n**Администратор:** {interaction.user.mention}",
-                color=discord.Color.gold()
+                title="🧹 Полная амнистия (Очистка)",
+                color=discord.Color.gold(),
+                timestamp=datetime.datetime.now()
             )
+            embed.add_field(name="👤 Сотрудник", value=member.mention, inline=False)
+            embed.add_field(name="🗑️ Очищено записей", value=f"`{deleted} шт.`", inline=True)
+            embed.add_field(name="🛡️ Инициатор", value=interaction.user.mention, inline=True)
+            embed.set_footer(text="VoidPulse System")
+
             ch = self.bot.get_channel(self.violations_channel_id)
             if ch:
                 await ch.send(embed=embed)
-            await interaction.followup.send(f"✅ Очищено записей: **{deleted}** для {member.mention}.", ephemeral=True)
+            await interaction.followup.send(f"✅ База очищена. Удалено {deleted} записей для {member.mention}.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Ошибка базы данных: {e}", ephemeral=True)
 
-    @app_commands.command(name="кик", description="Исключить участника с сервера")
+    @app_commands.command(name="кик", description="Исключить участника с сервера (Доступно Тех. Админам)")
     @app_commands.default_permissions(kick_members=True)
-    async def kick_member(self, interaction: discord.Interaction, member: discord.Member, reason: str = "Нарушение правил"):
-        await interaction.response.defer(ephemeral=True)
-        await member.kick(reason=reason)
-        embed = discord.Embed(
-            title="🚫 Исключение с сервера (Kick)",
-            description=f"**Пользователь:** {member.mention}\n**Причина:** {reason}\n**Модератор:** {interaction.user.mention}",
-            color=discord.Color.dark_red(),
-            timestamp=datetime.datetime.now()
-        )
-        ch = self.bot.get_channel(self.violations_channel_id)
-        if ch:
-            await ch.send(embed=embed)
-        await interaction.followup.send(f"✅ Пользователь {member.mention} исключен.", ephemeral=True)
+    async def kick_member(self, interaction: discord.Interaction, member: discord.Member, reason: str = "Грубое нарушение правил"):
+        if member.id == interaction.user.id:
+            embed = discord.Embed(title="⛔ Ошибка", description="Вы не можете исключить самого себя.", color=discord.Color.red())
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
+            
+        if member.top_role >= interaction.user.top_role and interaction.guild.owner_id != interaction.user.id:
+             embed = discord.Embed(title="⛔ Отказ в доступе", description="Вы не можете исключить пользователя, чья роль выше или равна вашей.", color=discord.Color.red())
+             return await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="mclog", description="Зафиксировать нарушение/действие из Minecraft в канал нарушений")
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await member.kick(reason=reason)
+            embed = discord.Embed(
+                title="🚫 Исключение с сервера (KICK)",
+                color=discord.Color.dark_red(),
+                timestamp=datetime.datetime.now()
+            )
+            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.add_field(name="👤 Пользователь", value=f"{member.mention} (`{member.display_name}`)", inline=True)
+            embed.add_field(name="🛡️ Модератор", value=interaction.user.mention, inline=True)
+            embed.add_field(name="📋 Причина", value=f"```{reason}```", inline=False)
+            
+            ch = self.bot.get_channel(self.violations_channel_id)
+            if ch:
+                await ch.send(embed=embed)
+            await interaction.followup.send(f"✅ Пользователь {member.mention} был исключен.", ephemeral=True)
+        except discord.Forbidden:
+             await interaction.followup.send("❌ У бота недостаточно прав для исключения этого пользователя.", ephemeral=True)
+
+    @app_commands.command(name="mclog", description="Зафиксировать серверное действие (доступно Тех. Админам)")
     @app_commands.default_permissions(administrator=True)
     @app_commands.choices(action=[
         app_commands.Choice(name="Бан", value="Бан"),
@@ -139,18 +180,22 @@ class ModerationCog(commands.Cog):
         app_commands.Choice(name="Выдача OP", value="Выдача OP"),
         app_commands.Choice(name="Снятие OP (Deop)", value="Снятие OP")
     ])
-    async def mclog(self, interaction: discord.Interaction, action: str, player: str, admin: str, reason: str = "Не указана"):
+    async def mclog(self, interaction: discord.Interaction, action: str, player: str, admin: str, reason: str = "Причина не указана"):
         await interaction.response.defer(ephemeral=True)
         embed = discord.Embed(
-            title=f"⛏️ [Minecraft Log] {action}",
-            description=f"**Игрок/Нарушитель:** `{player}`\n**Действие:** `{action}`\n**Причина/Детали:** {reason}\n**Выдал/Исполнитель:** `{admin}`",
+            title=f"⛏️ Лог Minecraft сервера: {action.upper()}",
             color=discord.Color.dark_purple(),
             timestamp=datetime.datetime.now()
         )
+        embed.add_field(name="Игрок/Нарушитель", value=f"`{player}`", inline=True)
+        embed.add_field(name="Исполнитель", value=f"`{admin}`", inline=True)
+        embed.add_field(name="Детали / Причина", value=f"```{reason}```", inline=False)
+        embed.set_footer(text="Интеграция с консолью VoidPulse")
+
         ch = self.bot.get_channel(self.violations_channel_id)
         if ch:
             await ch.send(embed=embed)
-        await interaction.followup.send("✅ Серверное действие Minecraft зафиксировано в канале нарушений.", ephemeral=True)
+        await interaction.followup.send(f"✅ Игровое действие **{action}** успешно записано в лог.", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(ModerationCog(bot))
