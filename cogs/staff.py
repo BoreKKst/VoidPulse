@@ -42,13 +42,13 @@ class StaffCog(commands.Cog):
     async def execute_norm_check(self):
         try:
             ch = self.bot.get_channel(self.personnel_channel_id)
-            report_lines = [
-                "📊 **Идеальный суточный отчёт нормы всего состава**",
-                "━━━━━━━━━━━━━━━━━━━"
-            ]
-
             ws = await asyncio.to_thread(self.get_lists_sheet)
             rows = await asyncio.to_thread(ws.get_all_values)
+
+            report_lines = [
+                "📊 **Суточный отчёт нормы персонала VoidPulse**",
+                "━━━━━━━━━━━━━━━━━━━"
+            ]
 
             for guild in self.bot.guilds:
                 for member in guild.members:
@@ -57,7 +57,6 @@ class StaffCog(commands.Cog):
                         
                     is_staff = any(any(kw in r.name.lower() for kw in STAFF_ROLES_KEYWORDS) for r in member.roles)
                     if is_staff:
-                        # Ищем часы в таблице (колонка F)
                         played_hours = "0"
                         for row in rows[1:]:
                             if len(row) >= 1 and row[0].strip().lower() == member.display_name.lower():
@@ -70,11 +69,11 @@ class StaffCog(commands.Cog):
                         report_lines.append(line)
 
             report_lines.append("━━━━━━━━━━━━━━━━━━━")
-            report_lines.append("✨ *Автоматическая проверка завершена успешно*")
+            report_lines.append(f"MineBlaze Staff Management • {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}")
 
             if ch:
                 embed = discord.Embed(
-                    title="👑 Итоговый отчёт персонала VoidPulse",
+                    title="👑 Итоговый отчёт персонала",
                     description="\n".join(report_lines),
                     color=discord.Color.green(),
                     timestamp=datetime.datetime.now()
@@ -96,18 +95,22 @@ class StaffCog(commands.Cog):
         embed = discord.Embed(title="👤 Режим камуфляжа", description=f"Статус маскировки: {status_text}", color=discord.Color.dark_gray())
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="test", description="Тест системы")
+    @app_commands.command(name="test", description="Тест системы и отправка в ЛС")
     async def test_command(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         try:
-            embed = discord.Embed(title="🧪 Тест VoidPulse", description="Синхронизация с таблицей работает.", color=discord.Color.blurple())
+            embed = discord.Embed(
+                title="🧪 Тестовое уведомление Staff System",
+                description="Все модули синхронизированы с Google Таблицей.",
+                color=discord.Color.blurple(),
+                timestamp=datetime.datetime.now()
+            )
             await interaction.user.send(embed=embed)
-            await interaction.followup.send("✅ Отправлено в ЛС.", ephemeral=True)
+            await interaction.followup.send("✅ Сводка отправлена вам в ЛС.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ Ошибка ЛС: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Ошибка отправки в ЛС: {e}", ephemeral=True)
 
-    # КОМАНДА /NORM: БЕРЕТ ДАННЫЕ ИЗ ТАБЛИЦЫ (КОЛОНКА F)
-    @app_commands.command(name="norm", description="Посмотреть статус своей нормы из таблицы")
+    @app_commands.command(name="norm", description="Посмотреть статус своей нормы")
     async def norm(self, interaction: discord.Interaction, member: discord.Member = None):
         target = member or interaction.user
         member_roles = [r.name.lower() for r in target.roles]
@@ -116,7 +119,6 @@ class StaffCog(commands.Cog):
             embed = discord.Embed(title="🛡️ Статус: Тех. администратор", description="Норма не требуется.", color=discord.Color.dark_theme())
             return await interaction.response.send_message(embed=embed)
 
-        # Читаем часы из Google Таблицы (колонка F)
         played_hours = "0"
         try:
             ws = await asyncio.to_thread(self.get_lists_sheet)
@@ -137,10 +139,11 @@ class StaffCog(commands.Cog):
             timestamp=datetime.datetime.now()
         )
         embed.set_thumbnail(url=target.display_avatar.url)
-        embed.add_field(name="Сотрудник", value=f"{target.mention} (`{target.display_name}`)", inline=False)
-        embed.add_field(name="Текущий статус", value="🟢 Освобожден" if is_exempt else "🟡 В процессе выполнения", inline=False)
-        embed.add_field(name="Отыграно на сервере", value=f"`{played_hours} ч.` / `1 ч.`", inline=False)
-        embed.add_field(name="За всё время (Таблица)", value=f"`{played_hours} ч.`", inline=False)
+        embed.add_field(name="👤 Сотрудник", value=f"{target.mention} (`{target.display_name}`)", inline=False)
+        embed.add_field(name="🟡 Текущий статус", value="Освобожден" if is_exempt else "В процессе выполнения", inline=False)
+        embed.add_field(name="⏱️ Отыграно на сервере", value=f"`{played_hours} ч.` / `1 ч.`", inline=False)
+        embed.add_field(name="📚 За всё время (Таблица)", value=f"`{played_hours} ч.`", inline=False)
+        embed.set_footer(text=f"MineBlaze Staff System • Норма • {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}")
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="norm_exempt", description="Освободить сотрудника от нормы")
@@ -154,7 +157,7 @@ class StaffCog(commands.Cog):
             await ch.send(embed=embed)
         await interaction.followup.send(f"✅ Готово.", ephemeral=True)
 
-    @app_commands.command(name="appoint", description="Назначить сотрудника")
+    @app_commands.command(name="appoint", description="Назначить сотрудника в персонал")
     @app_commands.default_permissions(administrator=True)
     async def appoint_member(self, interaction: discord.Interaction, member: discord.Member, role: str, mc_group: str, comment: str = "Нет комментариев"):
         if member.id == interaction.user.id:
@@ -182,18 +185,30 @@ class StaffCog(commands.Cog):
                 new_row = [member.display_name, role, f"@{member.name}", f"@{member.name}", comment, "0"]
                 await asyncio.to_thread(ws.append_row, new_row)
 
-            embed = discord.Embed(title="🟢 Обновление персонала", color=discord.Color.brand_green(), timestamp=datetime.datetime.now())
-            embed.add_field(name="Игрок", value=member.mention, inline=False)
-            embed.add_field(name="Должность", value=f"**{role}**", inline=True)
-            
+            # Дизайн эмбеда назначения точь-в-точь как на твоем скриншоте
+            embed = discord.Embed(
+                title="🛡️ Новое назначение в персонал!",
+                description=f"В состав администрации проекта назначен сотрудник `{member.name}`.",
+                color=discord.Color.brand_green(),
+                timestamp=datetime.datetime.now()
+            )
+            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.add_field(name="👤 Никнейм", value=f"`{member.display_name}`", inline=False)
+            embed.add_field(name="📌 Должность", value=f"`{role}`", inline=False)
+            embed.add_field(name="👑 Назначил", value=f"{interaction.user.mention} (`{interaction.user.name}`)", inline=False)
+            embed.add_field(name="💬 Discord", value=f"@{member.name}", inline=False)
+            embed.add_field(name="🎭 Роли в Discord", value=f"✅ Выданы: {role}", inline=False)
+            embed.add_field(name="⛏️ Права в Minecraft", value=f"✅ Выдана группа `{mc_group}` (LuckPerms)", inline=False)
+            embed.set_footer(text=f"MineBlaze Staff Management • Уведомления о персонале • {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}")
+
             ch = self.bot.get_channel(self.personnel_channel_id)
             if ch:
                 await ch.send(embed=embed)
-            await interaction.followup.send(f"✅ Назначен {member.mention}.", ephemeral=True)
+            await interaction.followup.send(f"✅ Сотрудник {member.mention} успешно назначен.", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
-    @app_commands.command(name="unstaff", description="Снять сотрудника")
+    @app_commands.command(name="unstaff", description="Снять сотрудника с должности")
     @app_commands.default_permissions(administrator=True)
     async def unstaff_member(self, interaction: discord.Interaction, member: discord.Member, reason: str = "По решению руководства"):
         if member.id == interaction.user.id:
@@ -215,13 +230,20 @@ class StaffCog(commands.Cog):
                 if rows[i] and rows[i][0].strip().lower() == member.display_name.lower():
                     await asyncio.to_thread(ws.delete_rows, i + 1)
 
-            embed = discord.Embed(title="📉 Снятие с должности", color=discord.Color.red(), timestamp=datetime.datetime.now())
-            embed.add_field(name="Сотрудник", value=member.mention, inline=False)
-            embed.add_field(name="Причина", value=f"```{reason}```", inline=False)
+            embed = discord.Embed(
+                title="📉 Снятие с должности",
+                color=discord.Color.red(),
+                timestamp=datetime.datetime.now()
+            )
+            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.add_field(name="👤 Сотрудник", value=member.mention, inline=False)
+            embed.add_field(name="🛡️ Снял", value=interaction.user.mention, inline=False)
+            embed.add_field(name="📋 Причина", value=f"```{reason}```", inline=False)
+            embed.set_footer(text=f"MineBlaze Staff Management • {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}")
             
             if ch:
                 await ch.send(embed=embed)
-            await interaction.followup.send(f"✅ Сотрудник {member.mention} успешно снят.", ephemeral=True)
+            await interaction.followup.send(f"✅ Сотрудник {member.mention} снят с должности.", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка снятия: {e}", ephemeral=True)
 
@@ -248,14 +270,16 @@ class StaffCog(commands.Cog):
                 if members:
                     members_str = "\n".join([f"➥ {m}" for m in members])
                     description_lines.append(f"**🔹 {kw.capitalize()}**\n{members_str}\n")
+                else:
+                    description_lines.append(f"**🔹 {kw.capitalize()} (0)**\n— никого\n")
 
             embed = discord.Embed(
                 title="👑 АКТУАЛЬНЫЙ СОСТАВ VOIDPULSE",
-                description="\n".join(description_lines) if description_lines else "*Состав пуст*",
+                description="\n".join(description_lines),
                 color=discord.Color.gold(),
                 timestamp=datetime.datetime.now()
             )
-            embed.set_footer(text="Проверено по серверу")
+            embed.set_footer(text=f"MineBlaze Staff Management • {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}")
             await interaction.followup.send(embed=embed)
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
