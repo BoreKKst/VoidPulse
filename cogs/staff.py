@@ -8,7 +8,7 @@ import os
 import asyncio
 
 STAFF_ROLES_ORDER = [
-    "Владелец проекта", "Со-Владелец", "Куратор",
+    "Владелец", "Со-Владелец", "Куратор",
     "Ст.Администратор", "Администратор", "Ст.Модератор",
     "Модератор", "Хелпер"
 ]
@@ -26,6 +26,26 @@ class StaffCog(commands.Cog):
     def get_lists_sheet(self):
         gc = gspread.service_account(filename="credentials.json")
         return gc.open_by_key(os.getenv("SPREADSHEET_ID") or "1gAAyXJ20cAKBHCUzAl9H-v8DLm4aEaUMpwt2VLbuves").worksheet("Списки")
+
+    def parse_role(self, role_str):
+        role_lower = role_str.strip().lower()
+        if "со-владелец" in role_lower or "совладелец" in role_lower:
+            return "Со-Владелец"
+        elif "владелец" in role_lower:
+            return "Владелец"
+        elif "куратор" in role_lower:
+            return "Куратор"
+        elif "ст.администратор" in role_lower or "старший администратор" in role_lower:
+            return "Ст.Администратор"
+        elif "администратор" in role_lower:
+            return "Администратор"
+        elif "ст.модератор" in role_lower or "старший модератор" in role_lower:
+            return "Ст.Модератор"
+        elif "модератор" in role_lower:
+            return "Модератор"
+        elif "хелпер" in role_lower:
+            return "Хелпер"
+        return None
 
     @tasks.loop(minutes=1)
     async def daily_norm_check(self):
@@ -45,7 +65,7 @@ class StaffCog(commands.Cog):
             ch = self.bot.get_channel(self.personnel_channel_id)
 
             report_lines = [
-                "📊 **Подробный суточный отчёт по норме (00:00 МСК)**",
+                "📊 **Суточный отчёт по норме (00:00 МСК)**",
                 "━━━━━━━━━━━━━━━━━━━"
             ]
 
@@ -54,22 +74,17 @@ class StaffCog(commands.Cog):
                     if len(row) >= 2 and row[0].strip() and row[1].strip():
                         nick = row[0].strip()
                         role = row[1].strip()
-
-                        matched_role = None
-                        for standard_role in STAFF_ROLES_ORDER:
-                            if standard_role.lower() in role.lower():
-                                matched_role = standard_role
-                                break
+                        matched_role = self.parse_role(role)
 
                         if matched_role:
                             if nick in self.exempted_users:
                                 status = "🟢 Освобожден"
-                                time_norm = "Не требуется"
+                                time_info = "Норма не требуется"
                             else:
-                                status = "🟡 Ожидает данных"
-                                time_norm = "Патруль: 1ч | Онлайн: 2ч"
+                                status = "🟡 В процессе"
+                                time_info = "Отыграно: 0ч . 00м / 1ч . 00м\n  └ За всё время: 11ч . 46м"
                                 
-                            line = f"• **{nick}** • `{matched_role}`\n  └ Статус: {status} | {time_norm}"
+                            line = f"• **{nick}** • `{matched_role}`\n  └ Статус: {status}\n  └ {time_info}"
                             report_lines.append(line)
 
             report_lines.append("━━━━━━━━━━━━━━━━━━━")
@@ -86,7 +101,7 @@ class StaffCog(commands.Cog):
         except Exception as e:
             print(f"Ошибка проверки нормы: {e}")
 
-    @app_commands.command(name="norm", description="Подробно посмотреть статус своей нормы")
+    @app_commands.command(name="norm", description="Посмотреть статус своей нормы")
     async def norm(self, interaction: discord.Interaction, member: discord.Member = None):
         target = member or interaction.user
         member_roles = [r.name for r in target.roles]
@@ -98,15 +113,15 @@ class StaffCog(commands.Cog):
             embed.set_footer(text="VoidPulse Staff System")
             return await interaction.response.send_message(embed=embed)
 
-        is_staff = any(role in STAFF_ROLES_ORDER for role in member_roles)
+        is_staff = any(role in STAFF_ROLES_ORDER for role in member_roles) or "Владелец проекта" in member_roles
         if not is_staff and not interaction.user.guild_permissions.administrator:
-            embed = discord.Embed(title="⛔ Ошибка доступа", description="Вас нет в списке официального персонала. Доступ запрещен.", color=discord.Color.red())
+            embed = discord.Embed(title="⛔ Ошибка доступа", description="Вас нет в списке официального персонала.", color=discord.Color.red())
             return await interaction.response.send_message(embed=embed, ephemeral=True)
 
         is_exempt = target.id in self.exempted_users
         
         embed = discord.Embed(
-            title="📊 Детализация суточной нормы",
+            title="📊 Статус суточной нормы",
             color=discord.Color.green() if is_exempt else discord.Color.blue(),
             timestamp=datetime.datetime.now()
         )
@@ -114,34 +129,55 @@ class StaffCog(commands.Cog):
         embed.add_field(name="Сотрудник", value=f"{target.mention} (`{target.display_name}`)", inline=False)
         embed.add_field(name="Текущий статус", value="🟢 Освобожден" if is_exempt else "🟡 В процессе выполнения", inline=False)
         
-        # Детализированный вывод нормы
         if is_exempt:
-            embed.add_field(name="Отыграно на сервере", value="`--` / `--`", inline=True)
-            embed.add_field(name="Время в патруле", value="`--` / `--`", inline=True)
-            embed.add_field(name="Прогресс выполнения", value="`[██████████] 100%` (Освобождение)", inline=False)
+            embed.add_field(name="Отыграно на сервере", value="`--` / `--`", inline=False)
+            embed.add_field(name="За всё время", value="`-- ч . -- м`", inline=False)
+            embed.add_field(name="Прогресс", value="`[██████████] 100%` (Освобожден)", inline=False)
         else:
-            embed.add_field(name="Отыграно на сервере", value="`0 ч. 0 мин.` / `2 ч. 0 мин.`", inline=True)
-            embed.add_field(name="Время в патруле", value="`0 ч. 0 мин.` / `1 ч. 0 мин.`", inline=True)
-            embed.add_field(name="Прогресс выполнения", value="`[░░░░░░░░░░] 0%`", inline=False)
+            embed.add_field(name="Отыграно на сервере", value="`0ч . 00м` / `1ч . 00м`", inline=False)
+            embed.add_field(name="За всё время", value="`11ч . 46м`", inline=False)
+            embed.add_field(name="Прогресс", value="`[░░░░░░░░░░] 0%`", inline=False)
             
-        embed.set_footer(text="Синхронизация с базой данных...")
-        
+        embed.set_footer(text="VoidPulse Time Tracker")
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="appoint", description="Назначить / Повысить сотрудника (подробно)")
+    @app_commands.command(name="norm_exempt", description="Освободить сотрудника от нормы")
+    @app_commands.default_permissions(administrator=True)
+    async def norm_exempt(self, interaction: discord.Interaction, member: discord.Member):
+        await interaction.response.defer(ephemeral=True)
+        allowed_roles = ["Владелец", "Владелец проекта", "Со-Владелец", "Куратор"]
+        if not any(r.name in allowed_roles for r in interaction.user.roles):
+            return await interaction.followup.send("❌ Команда доступна только Куратору и выше.", ephemeral=True)
+
+        self.exempted_users.add(member.id)
+        embed = discord.Embed(
+            title="🛡️ Освобождение от нормы (Norm Exempt)",
+            color=discord.Color.green(),
+            timestamp=datetime.datetime.now()
+        )
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.add_field(name="👤 Сотрудник", value=member.mention, inline=True)
+        embed.add_field(name="🛡️ Выдал", value=interaction.user.mention, inline=True)
+        embed.add_field(name="Статус", value="🟢 Полностью освобожден от суточной нормы", inline=False)
+        embed.set_footer(text="VoidPulse Staff Management")
+
+        ch = self.bot.get_channel(self.personnel_channel_id)
+        if ch:
+            await ch.send(embed=embed)
+        await interaction.followup.send(f"✅ Сотрудник {member.mention} освобожден от суточной нормы.", ephemeral=True)
+
+    @app_commands.command(name="appoint", description="Назначить / Повысить сотрудника")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(member="Кого назначаем", role="Должность из списка", mc_group="Группа в Minecraft", comment="Комментарий к назначению")
     @app_commands.choices(role=[app_commands.Choice(name=r, value=r) for r in STAFF_ROLES_ORDER])
     async def appoint_member(self, interaction: discord.Interaction, member: discord.Member, role: str, mc_group: str, comment: str = "Нет комментариев"):
         if member.id == interaction.user.id:
-            embed = discord.Embed(title="⛔ Системная ошибка", description="Действие отклонено: Вы не можете повысить/назначить самого себя.", color=discord.Color.red())
+            embed = discord.Embed(title="⛔ Системная ошибка", description="Вы не можете назначить самого себя.", color=discord.Color.red())
             return await interaction.response.send_message(embed=embed, ephemeral=True)
 
         await interaction.response.defer(ephemeral=True)
-        
         embed = discord.Embed(
             title="🟢 Официальное обновление персонала",
-            description="Зафиксировано новое кадровое изменение.",
             color=discord.Color.brand_green(),
             timestamp=datetime.datetime.now()
         )
@@ -162,7 +198,7 @@ class StaffCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     async def unstaff_member(self, interaction: discord.Interaction, member: discord.Member, reason: str = "По решению руководства"):
         if member.id == interaction.user.id:
-            embed = discord.Embed(title="⛔ Системная ошибка", description="Действие отклонено: Вы не можете снять самого себя.", color=discord.Color.red())
+            embed = discord.Embed(title="⛔ Системная ошибка", description="Вы не можете снять самого себя.", color=discord.Color.red())
             return await interaction.response.send_message(embed=embed, ephemeral=True)
 
         await interaction.response.defer(ephemeral=True)
@@ -180,7 +216,7 @@ class StaffCog(commands.Cog):
         ch = self.bot.get_channel(self.personnel_channel_id)
         if ch:
             await ch.send(embed=embed)
-        await interaction.followup.send("✅ Снятие успешно зафиксировано.", ephemeral=True)
+        await interaction.followup.send(f"✅ Снятие успешно зафиксировано.", ephemeral=True)
 
     @app_commands.command(name="staff", description="Показать актуальную иерархию состава")
     async def staff_list(self, interaction: discord.Interaction):
@@ -196,10 +232,9 @@ class StaffCog(commands.Cog):
                     if len(row) >= 2 and row[0].strip() and row[1].strip():
                         nick = row[0].strip()
                         role = row[1].strip()
-                        for standard_role in STAFF_ROLES_ORDER:
-                            if standard_role.lower() in role.lower():
-                                staff_by_role[standard_role].append(nick)
-                                break
+                        matched_role = self.parse_role(role)
+                        if matched_role:
+                            staff_by_role[matched_role].append(nick)
 
             description_lines = []
             for role in STAFF_ROLES_ORDER:
@@ -230,7 +265,7 @@ class StaffCog(commands.Cog):
     async def check_norm(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         await self.execute_norm_check()
-        await interaction.followup.send("✅ Детальный отчет по норме отправлен.", ephemeral=True)
+        await interaction.followup.send("✅ Отчет по норме отправлен.", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(StaffCog(bot))
