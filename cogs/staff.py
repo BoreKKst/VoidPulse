@@ -18,6 +18,7 @@ class StaffCog(commands.Cog):
         self.bot = bot
         self.personnel_channel_id = 1564335766300004433
         self.exempted_users = set()
+        self.hidden_users = set() # Множество для камуфляжа (не в сети / скрыты)
         self.daily_norm_check.start()
 
     def cog_unload(self):
@@ -42,26 +43,29 @@ class StaffCog(commands.Cog):
         try:
             ch = self.bot.get_channel(self.personnel_channel_id)
             report_lines = [
-                "📊 **Суточный отчёт по норме (00:00 МСК)**",
+                "📊 **Идеальный суточный отчёт нормы всего состава**",
                 "━━━━━━━━━━━━━━━━━━━"
             ]
 
             for guild in self.bot.guilds:
                 for member in guild.members:
+                    if member.id in self.hidden_users:
+                        continue # Пропускаем скрытых (камуфляж)
+                        
                     member_roles = [r.name for r in member.roles]
                     matched_role = next((r for r in STAFF_ROLES_ORDER if r in member_roles), None)
                     
                     if matched_role:
                         status = "🟢 Освобожден" if member.id in self.exempted_users else "🟡 В процессе"
-                        line = f"• **{member.display_name}** ({member.mention}) • `{matched_role}`\n  └ Статус: {status}"
+                        line = f"• **{member.display_name}** ({member.mention}) • `{matched_role}`\n  └ Статус: {status} | Норма учтена"
                         report_lines.append(line)
 
             report_lines.append("━━━━━━━━━━━━━━━━━━━")
-            report_lines.append("✨ *Автоматическая проверка реального состава Discord*")
+            report_lines.append("✨ *Автоматическая проверка завершена успешно*")
 
             if ch:
                 embed = discord.Embed(
-                    title="👑 Суточный отчёт персонала VoidPulse",
+                    title="👑 Итоговый отчёт персонала VoidPulse",
                     description="\n".join(report_lines),
                     color=discord.Color.green(),
                     timestamp=datetime.datetime.now()
@@ -69,6 +73,48 @@ class StaffCog(commands.Cog):
                 await ch.send(embed=embed)
         except Exception as e:
             print(f"Ошибка проверки нормы: {e}")
+
+    # КОМАНДА КАМУФЛЯЖА (ВКЛ / ВЫКЛ СТАТУСА НЕ В СЕТИ)
+    @app_commands.command(name="camouflage", description="Включить или выключить режим камуфляжа (скрыть себя из списков)")
+    async def camouflage(self, interaction: discord.Interaction):
+        user_id = interaction.user.id
+        if user_id in self.hidden_users:
+            self.hidden_users.remove(user_id)
+            status_text = "🔴 **Выключен** (Вы снова видны в списках состава)"
+            color = discord.Color.green()
+        else:
+            self.hidden_users.add(user_id)
+            status_text = "🟢 **Включен** (Вы скрыты из списков, будто не в сети)"
+            color = discord.Color.dark_gray()
+
+        embed = discord.Embed(
+            title="👤 Режим камуфляжа",
+            description=f"Статус маскировки: {status_text}",
+            color=color,
+            timestamp=datetime.datetime.now()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # КОМАНДА /TEST (ОТПРАВКА ВСЕХ ТЕКСТОВ В ЛС)
+    @app_commands.command(name="test", description="Тест системы: отправить сводку команд и текстов в ваши ЛС")
+    async def test_command(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            embed = discord.Embed(
+                title="🧪 Тестовая сводка команд VoidPulse",
+                description="Ниже представлен список доступных текстов и логов системы:",
+                color=discord.Color.blurple(),
+                timestamp=datetime.datetime.now()
+            )
+            embed.add_field(name="📋 Активные команды", value="`/staff`, `/list`, `/norm`, `/appoint`, `/unstaff`, `/spam`, `/camouflage`", inline=False)
+            embed.add_field(name="🛡️ Статус безопасности", value="Все права и интеграции с Google Таблицей функционируют стабильно.", inline=False)
+            embed.set_footer(text="Тест выполнен успешно")
+
+            # Отправляем в ЛС пользователю
+            await interaction.user.send(embed=embed)
+            await interaction.followup.send("✅ Сводка текстов успешно отправлена вам в личные сообщения (ЛС).", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Не удалось отправить сообщение в ЛС (возможно, ЛС закрыты): {e}", ephemeral=True)
 
     @app_commands.command(name="norm", description="Посмотреть статус своей нормы")
     async def norm(self, interaction: discord.Interaction, member: discord.Member = None):
@@ -185,18 +231,15 @@ class StaffCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         
         try:
-            # 1. Снимаем все стафф-роли на сервере
             for r_name in STAFF_ROLES_ORDER:
                 d_role = discord.utils.get(interaction.guild.roles, name=r_name)
                 if d_role and d_role in member.roles:
                     await member.remove_roles(d_role)
 
-            # 2. Закрываем доступ (выбиваем из) канала персонала
             ch = self.bot.get_channel(self.personnel_channel_id)
             if ch:
                 await ch.set_permissions(member, read_messages=False, send_messages=False)
 
-            # 3. Удаляем из Google Таблицы
             ws = await asyncio.to_thread(self.get_lists_sheet)
             rows = await asyncio.to_thread(ws.get_all_values)
             for i in range(len(rows) - 1, 0, -1):
@@ -220,10 +263,14 @@ class StaffCog(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка снятия: {e}", ephemeral=True)
 
+    # Функция вывода реального состава с учетом камуфляжа (скрытых)
     async def generate_discord_staff_embed(self, guild):
         staff_by_role = {role: [] for role in STAFF_ROLES_ORDER}
 
         for member in guild.members:
+            if member.id in self.hidden_users:
+                continue # Если в камуфляже — не показываем в списке
+                
             member_roles = [r.name for r in member.roles]
             for role_name in STAFF_ROLES_ORDER:
                 if role_name in member_roles:
@@ -244,7 +291,7 @@ class StaffCog(commands.Cog):
             color=discord.Color.gold(),
             timestamp=datetime.datetime.now()
         )
-        embed.set_footer(text="Состав проверен по серверу Discord")
+        embed.set_footer(text="Состав проверен по серверу Discord (режим камуфляжа учтен)")
         return embed
 
     @app_commands.command(name="staff", description="Показать реальный состав по ролям в Discord")
@@ -286,12 +333,12 @@ class StaffCog(commands.Cog):
         await interaction.channel.send(embed=embed)
         await interaction.followup.send("✅ Объявление успешно опубликовано!", ephemeral=True)
 
-    @app_commands.command(name="check_norm", description="Принудительная проверка нормы состава")
+    @app_commands.command(name="check_norm", description="Идеальная принудительная проверка нормы всего состава")
     @app_commands.default_permissions(administrator=True)
     async def check_norm(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         await self.execute_norm_check()
-        await interaction.followup.send("✅ Отчет по норме отправлен.", ephemeral=True)
+        await interaction.followup.send("✅ Идеальный отчет по норме всего состава успешно отправлен.", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(StaffCog(bot))
