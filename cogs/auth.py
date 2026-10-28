@@ -2,6 +2,8 @@ import discord
 from discord.ext import commands
 import time
 import asyncio
+import os
+from aiohttp import web
 
 # Новый безопасный ключ
 SECRET_PLUGIN_KEY = "VP_SECURE_KEY_7749_BETA_SECURE"
@@ -13,6 +15,59 @@ class AuthVerificationCog(commands.Cog):
         self.verified_role_id = 1564692728996958269
         # Структура сессий: { "SESSION_UUID": {"code": "2GD239", "mc_nick": "steve", "expires": timestamp, "verified": False} }
         self.sessions = {}
+        self.runner = None
+        
+        # Запускаем локальный веб-сервер для связи с плагином на NexuzHost
+        self.bot.loop.create_task(self.start_web_server())
+
+    async def start_web_server(self):
+        app = web.Application()
+        app.router.add_post('/api/register', self.handle_register_api)
+        app.router.add_post('/api/check', self.handle_check_api)
+        
+        # Render автоматически выделяет порт через переменные окружения
+        port = int(os.environ.get("PORT", 8080))
+        self.runner = web.AppRunner(app)
+        await self.runner.setup()
+        site = web.TCPSite(self.runner, '0.0.0.0', port)
+        try:
+            await site.start()
+            print(f"✅ [API SERVER] Веб-сервер для связи с плагином успешно запущен на порту {port}")
+        except Exception as e:
+            print(f"❌ [API SERVER ERROR] Не удалось запустить веб-сервер: {e}")
+
+    def cog_unload(self):
+        if self.runner:
+            self.bot.loop.create_task(self.runner.cleanup())
+
+    async def handle_register_api(self, request):
+        try:
+            data = await request.json()
+            secret = data.get("secret_key")
+            mc_nick = data.get("mc_nick")
+            code = data.get("code")
+            session_id = data.get("session_id")
+
+            success, message = await self.register_mc_session(secret, mc_nick, code, session_id)
+            if success:
+                return web.json_response({"status": "success", "message": message})
+            else:
+                return web.json_response({"status": "error", "message": message}, status=400)
+        except Exception as e:
+            return web.json_response({"status": "error", "message": str(e)}, status=500)
+
+    async def handle_check_api(self, request):
+        try:
+            data = await request.json()
+            secret = data.get("secret_key")
+            mc_nick = data.get("mc_nick")
+            code = data.get("code")
+            session_id = data.get("session_id")
+
+            success, status_code = self.atomic_consume_session(secret, mc_nick, code, session_id)
+            return web.json_response({"success": success, "code": status_code})
+        except Exception as e:
+            return web.json_response({"success": False, "error": str(e)}, status=500)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
