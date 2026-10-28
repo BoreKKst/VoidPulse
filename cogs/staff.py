@@ -123,7 +123,7 @@ class StaffCog(commands.Cog):
             await ch.send(embed=embed)
         await interaction.followup.send(f"✅ Сотрудник {member.mention} освобожден от суточной нормы.", ephemeral=True)
 
-    @app_commands.command(name="appoint", description="Назначить сотрудника (выдает роль в Discord)")
+    @app_commands.command(name="appoint", description="Назначить сотрудника (выдает роль и сохраняет @ в таблицу)")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(member="Кого назначаем", role="Должность из списка", mc_group="Группа в Minecraft", comment="Комментарий к назначению")
     @app_commands.choices(role=[app_commands.Choice(name=r, value=r) for r in STAFF_ROLES_ORDER])
@@ -139,6 +139,22 @@ class StaffCog(commands.Cog):
             if discord_role:
                 await member.add_roles(discord_role)
 
+            ws = await asyncio.to_thread(self.get_lists_sheet)
+            rows = await asyncio.to_thread(ws.get_all_values)
+            
+            updated = False
+            for i, row in enumerate(rows[1:], start=2):
+                if len(row) >= 1 and row[0].strip().lower() == member.display_name.lower():
+                    await asyncio.to_thread(ws.update_cell, i, 2, role)
+                    await asyncio.to_thread(ws.update_cell, i, 3, f"@{member.name}")
+                    await asyncio.to_thread(ws.update_cell, i, 5, comment)
+                    updated = True
+                    break
+            
+            if not updated:
+                new_row = [member.display_name, role, f"@{member.name}", f"@{member.name}", comment, "0"]
+                await asyncio.to_thread(ws.append_row, new_row)
+
             embed = discord.Embed(
                 title="🟢 Официальное обновление персонала",
                 color=discord.Color.brand_green(),
@@ -150,16 +166,16 @@ class StaffCog(commands.Cog):
             embed.add_field(name="🎮 Группа (Minecraft)", value=f"`{mc_group}`", inline=True)
             embed.add_field(name="📝 Комментарий", value=f"*{comment}*", inline=False)
             embed.add_field(name="🛡️ Назначил", value=f"{interaction.user.mention} (`{interaction.user.display_name}`)", inline=False)
-            embed.set_footer(text="Роль выдана на сервере Discord")
+            embed.set_footer(text="Записано в таблицу как @ник")
 
             ch = self.bot.get_channel(self.personnel_channel_id)
             if ch:
                 await ch.send(embed=embed)
-            await interaction.followup.send(f"✅ Игрок {member.mention} получил роль **{role}**.", ephemeral=True)
+            await interaction.followup.send(f"✅ Игрок {member.mention} назначен на должность **{role}**.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ Ошибка выдачи роли: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
-    @app_commands.command(name="unstaff", description="Снять сотрудника (снимает роли на сервере)")
+    @app_commands.command(name="unstaff", description="Снять сотрудника (снимает роли, кикает из staff-канала и удаляет из таблицы)")
     @app_commands.default_permissions(administrator=True)
     async def unstaff_member(self, interaction: discord.Interaction, member: discord.Member, reason: str = "По решению руководства"):
         if member.id == interaction.user.id:
@@ -169,10 +185,23 @@ class StaffCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         
         try:
+            # 1. Снимаем все стафф-роли на сервере
             for r_name in STAFF_ROLES_ORDER:
                 d_role = discord.utils.get(interaction.guild.roles, name=r_name)
                 if d_role and d_role in member.roles:
                     await member.remove_roles(d_role)
+
+            # 2. Закрываем доступ (выбиваем из) канала персонала
+            ch = self.bot.get_channel(self.personnel_channel_id)
+            if ch:
+                await ch.set_permissions(member, read_messages=False, send_messages=False)
+
+            # 3. Удаляем из Google Таблицы
+            ws = await asyncio.to_thread(self.get_lists_sheet)
+            rows = await asyncio.to_thread(ws.get_all_values)
+            for i in range(len(rows) - 1, 0, -1):
+                if rows[i] and rows[i][0].strip().lower() == member.display_name.lower():
+                    await asyncio.to_thread(ws.delete_rows, i + 1)
 
             embed = discord.Embed(
                 title="📉 Снятие / Понижение с должности",
@@ -183,16 +212,14 @@ class StaffCog(commands.Cog):
             embed.add_field(name="👤 Сотрудник", value=f"{member.mention} (`{member.display_name}`)", inline=True)
             embed.add_field(name="🛡️ Снял", value=interaction.user.mention, inline=True)
             embed.add_field(name="📋 Причина", value=f"```{reason}```", inline=False)
-            embed.set_footer(text="Роли на сервере успешно сняты")
+            embed.set_footer(text="Роли сняты, доступ к каналу персонала закрыт, удален из таблицы")
 
-            ch = self.bot.get_channel(self.personnel_channel_id)
             if ch:
                 await ch.send(embed=embed)
             await interaction.followup.send(f"✅ Сотрудник {member.mention} снят с должности.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ Ошибка снятия ролей: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Ошибка снятия: {e}", ephemeral=True)
 
-    # Отдельная функция проверки реального состава по ролям в Discord для /list и /staff
     async def generate_discord_staff_embed(self, guild):
         staff_by_role = {role: [] for role in STAFF_ROLES_ORDER}
 
@@ -200,7 +227,7 @@ class StaffCog(commands.Cog):
             member_roles = [r.name for r in member.roles]
             for role_name in STAFF_ROLES_ORDER:
                 if role_name in member_roles:
-                    staff_by_role[role_name].append(member.mention)
+                    staff_by_role[role_name].append(f"{member.mention} (`{member.display_name}`)")
 
         description_lines = []
         for role in STAFF_ROLES_ORDER:
@@ -212,12 +239,12 @@ class StaffCog(commands.Cog):
             description_lines.append(f"**🔹 {role}**\n{members_str}\n")
 
         embed = discord.Embed(
-            title="👑 АКТУАЛЬНЫЙ СОСТАВ VOIDPULSE (Discord Сервер)",
+            title="👑 АКТУАЛЬНЫЙ СОСТАВ VOIDPULSE",
             description="\n".join(description_lines),
             color=discord.Color.gold(),
             timestamp=datetime.datetime.now()
         )
-        embed.set_footer(text="Проверено по реальным ролям участников на сервере")
+        embed.set_footer(text="Состав проверен по серверу Discord")
         return embed
 
     @app_commands.command(name="staff", description="Показать реальный состав по ролям в Discord")
@@ -229,7 +256,7 @@ class StaffCog(commands.Cog):
             ch = self.bot.get_channel(self.personnel_channel_id)
             if ch:
                 await ch.send(embed=embed)
-            await interaction.followup.send("✅ Реальный состав по ролям выведен в канал.", ephemeral=True)
+            await interaction.followup.send("✅ Состав успешно выведен в канал.", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
@@ -243,7 +270,6 @@ class StaffCog(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Ошибка команды list: {e}", ephemeral=True)
 
-    # Новая команда для рассылки / спама объявления
     @app_commands.command(name="spam", description="Разослать красивое объявление в текущий канал")
     @app_commands.default_permissions(administrator=True)
     async def spam_message(self, interaction: discord.Interaction, заголовок: str, текст: str):
